@@ -1,15 +1,28 @@
 import os
 import shutil
+import threading
 import telebot
 import yt_dlp
 import instaloader
+from flask import Flask
 
 BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 DOWNLOAD_DIR = "downloads"
 
-# تابع برای ایجاد و پاکسازی کامل پوشه دانلودها
+# ایجاد سرور وب کوچک برای جلوگیری از خطای پورت در رندر (Web Service)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Instagram Downloader Bot is running live!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# تابع ایجاد و پاکسازی پوشه دانلودها
 def clear_downloads():
     if os.path.exists(DOWNLOAD_DIR):
         shutil.rmtree(DOWNLOAD_DIR)
@@ -17,7 +30,6 @@ def clear_downloads():
 
 clear_downloads()
 
-# راه‌اندازی اینستالودر
 L = instaloader.Instaloader(
     dirname_pattern=DOWNLOAD_DIR,
     download_videos=True,
@@ -31,17 +43,15 @@ def send_welcome(message):
     bot.reply_to(
         message,
         "سلام! 🤖\n"
-        "ابزار دانلودر اینستاگرام (با پاکسازی خودکار حافظه) فعال است.\n\n"
+        "ابزار دانلودر اینستاگرام (فعال و پایدار روی رندر) آماده است.\n\n"
         "📌 **راهنما:**\n"
         "1️⃣ لینک پست یا ریلز را بفرستید.\n"
-        "2️⃣ یا آیدی یک پیج (مثلا `nasa`) را بفرستید."
+        "2️⃣ آیدی یک پیج را بفرستید تا پست‌های آن را دریافت کنید."
     )
 
 @bot.message_handler(func=lambda message: True)
 def handle_instagram_request(message):
     text = message.text.strip()
-    
-    # پاکسازی فایل‌های باقی‌مانده از قبل در شروع هر درخواست جدید
     clear_downloads()
     
     if text.startswith("http://") or text.startswith("https://"):
@@ -66,7 +76,6 @@ def handle_instagram_request(message):
             bot.reply_to(message, f"❌ خطا در دانلود لینک:\n{str(e)}")
             
         finally:
-            # پاکسازی کامل پوشه پس از اتمام کار (چه موفقیت‌آمیز چه خطا)
             clear_downloads()
             
     else:
@@ -76,7 +85,6 @@ def handle_instagram_request(message):
         try:
             profile = instaloader.Profile.from_username(L.context, username)
             
-            # ارسال عکس پروفایل
             bot.send_photo(
                 message.chat.id, 
                 profile.profile_pic_url, 
@@ -84,14 +92,12 @@ def handle_instagram_request(message):
             )
             
             count = 0
-            # دانلود ۳ پست آخر
             for post in profile.get_posts():
                 if count >= 3:
                     break
                 L.download_post(post, target=username)
                 count += 1
             
-            # ارسال فایل‌های دانلود شده به کاربر
             sent_files = 0
             for root, dirs, files in os.walk(DOWNLOAD_DIR):
                 for file in files:
@@ -116,9 +122,14 @@ def handle_instagram_request(message):
             bot.reply_to(message, f"❌ خطا در پردازش پیج:\n{str(e)}")
             
         finally:
-            # پاکسازی کامل پوشه پس از اتمام ارسال‌ها
             clear_downloads()
 
 if __name__ == "__main__":
-    print("Bot is running with auto-cleanup...")
+    # اجرای وب سرور در پس‌زمینه برای حفظ پورت رندر
+    threading.Thread(target=run_web).load if hasattr(threading.Thread(target=run_web), 'load') else None
+    web_thread = threading.Thread(target=run_web)
+    web_thread.daemon = True
+    web_thread.start()
+    
+    print("Bot & Web server are running...")
     bot.infinity_polling()
