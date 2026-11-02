@@ -206,8 +206,7 @@ def handle_instagram_request(message):
                 bot.send_video(
                     message.chat.id, 
                     video, 
-                    caption=f"✅ دانلود با موفقیت انجام شد.\n\n📝 **کپشن:**\n{caption_text[:800]}", 
-                    parse_mode="Markdown"
+                    caption=f"✅ دانلود با موفقیت انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}"
                 )
             
             bot.delete_message(message.chat.id, status_msg.message_id)
