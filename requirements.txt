@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 yt-dlp
-instaloader
 flask
+Pillow
