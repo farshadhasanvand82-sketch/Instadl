@@ -141,7 +141,7 @@ def callback_menu_selection(call):
         if cover_auth.get(user_id):
             user_states[user_id] = "waiting_cover_bg"
             cover_data[user_id] = {}
-            text = "🎨 **بخش ساخت کاور فعال شد.**\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را به صورت عکس ارسال کنید:"
+            text = "🎨 **بخش ساخت کاور فعال شد.**\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را ارسال کنید:"
             markup = get_main_menu_markup()
             bot.answer_callback_query(call.id)
             try:
@@ -222,7 +222,7 @@ def process_save_channel(message):
         save_settings(settings)
         bot.reply_to(message, f"✅ کانال قفل با موفقیت روی `{text}` تنظیم شد.")
 
-@bot.message_handler(content_types=['photo', 'text'])
+@bot.message_handler(content_types=['photo', 'document', 'text'])
 def handle_all_requests(message):
     user_id = message.from_user.id
     save_user(message)
@@ -241,15 +241,21 @@ def handle_all_requests(message):
             cover_auth[user_id] = True
             user_states[user_id] = "waiting_cover_bg"
             cover_data[user_id] = {}
-            bot.reply_to(message, "✅ رمز تایید شد!\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را به صورت عکس بفرستید:", reply_markup=get_main_menu_markup())
+            bot.reply_to(message, "✅ رمز تایید شد!\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را ارسال کنید:", reply_markup=get_main_menu_markup())
         else:
             bot.reply_to(message, "❌ رمز اشتباه است. دوباره تلاش کنید:", reply_markup=get_main_menu_markup())
         return
 
-    # دریافت تصویر اول کاور
+    # دریافت تصویر اول کاور (پشتیبانی از عکس و فایل)
     if current_state == "waiting_cover_bg":
+        file_id = None
         if message.photo:
-            file_info = bot.get_file(message.photo[-1].file_id)
+            file_id = message.photo[-1].file_id
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+            file_id = message.document.file_id
+
+        if file_id:
+            file_info = bot.get_file(file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             bg_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_bg.jpg")
             with open(bg_path, 'wb') as new_file:
@@ -257,15 +263,21 @@ def handle_all_requests(message):
             
             cover_data[user_id]["bg"] = bg_path
             user_states[user_id] = "waiting_cover_logo"
-            bot.reply_to(message, "✅ تصویر بک‌گراند ذخیره شد.\n\n🖼 حالا **تصویر دوم (لوگوی اسم فیلم به صورت PNG شفاف)** را بفرستید:")
+            bot.reply_to(message, "✅ تصویر بک‌گراند ذخیره شد.\n\n🖼 حالا **تصویر دوم (لوگوی اسم فیلم به صورت PNG یا فایل)** را بفرستید:")
         else:
-            bot.reply_to(message, "❌ لطفاً تصویر بک‌گراند را به صورت عکس ارسال کنید.")
+            bot.reply_to(message, "❌ لطفاً تصویر بک‌گراند را به صورت عکس یا فایل تصویری ارسال کنید.")
         return
 
-    # دریافت تصویر دوم کاور (لوگو)
+    # دریافت تصویر دوم کاور / لوگو (پشتیبانی از عکس و فایل)
     if current_state == "waiting_cover_logo":
+        file_id = None
         if message.photo:
-            file_info = bot.get_file(message.photo[-1].file_id)
+            file_id = message.photo[-1].file_id
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+            file_id = message.document.file_id
+
+        if file_id:
+            file_info = bot.get_file(file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             logo_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_logo.png")
             with open(logo_path, 'wb') as new_file:
@@ -275,7 +287,7 @@ def handle_all_requests(message):
             user_states[user_id] = "waiting_cover_subtitle"
             bot.reply_to(message, "✅ لوگو ذخیره شد.\n\n💬 حالا **متن اول (مثل: زیرنویس فارسی بدون سانسور یا دوبله فارسی)** را بفرستید:")
         else:
-            bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس ارسال کنید.")
+            bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس یا فایل تصویری ارسال کنید.")
         return
 
     # دریافت متن اول و ساخت نهایی تصویر کاور
