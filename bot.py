@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Stable Multi-Downloader Bot is running live!"
+    return "🤖 Safe Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -132,7 +132,7 @@ def callback_menu_selection(call):
         text = "▶️ **بخش یوتیوب فعال شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
     elif action == "music":
         user_states[user_id] = "waiting_music"
-        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک اسپاتیفای یا ساندکلود خود را بفرستید:"
+        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ یا ترک اسپاتیفای/ساندکلود خود را بفرستید:"
         
     markup = get_main_menu_markup()
     bot.answer_callback_query(call.id)
@@ -215,8 +215,7 @@ def callback_yt_download(call):
             'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
-            'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -294,8 +293,7 @@ def handle_all_requests(message):
         elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {
                 'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
-                'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=False)
@@ -328,9 +326,9 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m:
-                        target_url = f"scsearch:{m.group(1)}"
+                        target_url = f"ytsearch1:{m.group(1)}"
                 except:
-                    target_url = text
+                    target_url = f"ytsearch1:{text}"
 
             ydl_opts = {
                 'format': 'bestaudio',
@@ -341,14 +339,16 @@ def handle_all_requests(message):
                     'preferredquality': '192',
                 }],
                 'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
-                'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info:
-                    info = info['entries'][0]
+                    if len(info['entries']) > 0:
+                        info = info['entries'][0]
+                    else:
+                        raise Exception("موزیکی یافت نشد.")
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
             
             if os.path.exists(file_path):
