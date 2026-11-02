@@ -4,6 +4,7 @@ import threading
 import json
 import telebot
 import yt_dlp
+from PIL import Image, ImageDraw, ImageFont
 from flask import Flask
 from telebot import types
 
@@ -16,12 +17,14 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
 user_states = {}
+cover_auth = {}
+cover_data = {} # ذخیره موقت اطلاعات ساخت کاور هر کاربر
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Final Fixed Multi-Downloader Bot is running live!"
+    return "🤖 Cover Maker & Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -85,7 +88,7 @@ def get_main_menu_markup():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📸 اینستاگرام", callback_data="menu_insta"),
-        types.InlineKeyboardButton("▶️ یوتیوب", callback_data="menu_youtube"),
+        types.InlineKeyboardButton("🎨 ساخت کاور", callback_data="menu_cover"),
         types.InlineKeyboardButton("🎵 اسپاتیفای / ساندکلود", callback_data="menu_music")
     )
     return markup
@@ -112,8 +115,8 @@ def send_welcome(message):
     bot.reply_to(
         message,
         "سلام! 🤖\n"
-        "به ربات پیشرفته دانلود رسانه خوش آمدید.\n\n"
-        "📌 **برای شروع، لطفاً بخش مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
+        "به ربات پیشرفته ساخت کاور و دانلود رسانه خوش آمدید.\n\n"
+        "📌 **برای شروع، لطفاً گزینه مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
         reply_markup=get_main_menu_markup()
     )
     if admin_markup:
@@ -127,19 +130,38 @@ def callback_menu_selection(call):
     if action == "insta":
         user_states[user_id] = "waiting_insta"
         text = "📸 **بخش اینستاگرام فعال شد.**\n\nحالا لینک پست یا ریلز اینستاگرام خود را بفرستید:"
-    elif action == "youtube":
-        user_states[user_id] = "waiting_youtube"
-        text = "▶️ **بخش یوتیوب فعال شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
+        markup = get_main_menu_markup()
+        bot.answer_callback_query(call.id)
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+            
+    elif action == "cover":
+        if cover_auth.get(user_id):
+            user_states[user_id] = "waiting_cover_bg"
+            cover_data[user_id] = {}
+            text = "🎨 **بخش ساخت کاور فعال شد.**\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را به صورت عکس (نه‌به صورت فایل) ارسال کنید:"
+            markup = get_main_menu_markup()
+            bot.answer_callback_query(call.id)
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+            except:
+                bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        else:
+            user_states[user_id] = "waiting_cover_password"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "🔐 لطفا رمز عبور بخش ساخت کاور را وارد کنید:")
+
     elif action == "music":
         user_states[user_id] = "waiting_music"
-        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ یا آلبوم اسپاتیفای/ساندکلود خود را بفرستید:"
-        
-    markup = get_main_menu_markup()
-    bot.answer_callback_query(call.id)
-    try:
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-    except:
-        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ اسپاتیفای یا ساندکلود خود را بفرستید:"
+        markup = get_main_menu_markup()
+        bot.answer_callback_query(call.id)
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check_sub(call):
@@ -200,52 +222,8 @@ def process_save_channel(message):
         save_settings(settings)
         bot.reply_to(message, f"✅ کانال قفل با موفقیت روی `{text}` تنظیم شد.")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("yt_"))
-def callback_yt_download(call):
-    try:
-        data_parts = call.data.split("_")
-        format_id = data_parts[1]
-        url = "_".join(data_parts[2:])
-        
-        bot.answer_callback_query(call.id, "⏳ در حال دانلود ویدیو...")
-        status_msg = bot.send_message(call.message.chat.id, "📥 در حال آماده‌سازی و ارسال ویدیو...")
-        
-        ydl_opts = {
-            'format': f'{format_id}+bestaudio/best',
-            'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'extractor_args': {'youtube': {'player_client': ['android']}},
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            file_path = ydl.prepare_filename(info)
-            if not os.path.exists(file_path):
-                file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
-            
-            if os.path.exists(file_path):
-                file_size = os.path.getsize(file_path) / (1024 * 1024)
-                if file_size > 512:
-                    bot.reply_to(call.message, "❌ حجم ویدیو بیشتر از ۵۱۲ مگابایت است.")
-                else:
-                    with open(file_path, 'rb') as vid:
-                        bot.send_video(call.message.chat.id, vid, caption="✅ دانلود ویدیو با موفقیت انجام شد.\n🤖 t.me/zeucdl_bot", reply_markup=get_main_menu_markup())
-            else:
-                bot.reply_to(call.message, "❌ خطا در آماده‌سازی فایل.", reply_markup=get_main_menu_markup())
-                
-        try:
-            bot.delete_message(call.message.chat.id, status_msg.message_id)
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-            
-    except Exception as e:
-        bot.reply_to(call.message, f"❌ خطا در دانلود: {str(e)}", reply_markup=get_main_menu_markup())
-    finally:
-        clear_downloads()
-
-@bot.message_handler(func=lambda message: True)
+# مدیریت عکس‌های ارسالی یا متن‌ها برای بخش ساخت کاور
+@bot.message_handler(content_types=['photo', 'text'])
 def handle_all_requests(message):
     user_id = message.from_user.id
     save_user(message)
@@ -255,13 +233,127 @@ def handle_all_requests(message):
         bot.reply_to(message, "⚠️ لطفا ابتدا در کانال ربات عضو شوید.")
         return
 
-    text = message.text.strip()
-    
+    current_state = user_states.get(user_id)
+    text = message.text.strip() if message.text else ""
+
+    # 1. بررسی رمز بخش ساخت کاور
+    if current_state == "waiting_cover_password":
+        if text == "negin":
+            cover_auth[user_id] = True
+            user_states[user_id] = "waiting_cover_bg"
+            cover_data[user_id] = {}
+            bot.reply_to(message, "✅ رمز تایید شد!\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را به صورت عکس بفرستید:", reply_markup=get_main_menu_markup())
+        else:
+            bot.reply_to(message, "❌ رمز اشتباه است. دوباره تلاش کنید:", reply_markup=get_main_menu_markup())
+        return
+
+    # 2. دریافت تصویر اول (بک‌گراند)
+    if current_state == "waiting_cover_bg":
+        if message.photo:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            bg_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_bg.jpg")
+            with open(bg_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+            
+            cover_data[user_id]["bg"] = bg_path
+            user_states[user_id] = "waiting_cover_logo"
+            bot.reply_to(message, "✅ تصویر بک‌گراند ذخیره شد.\n\n🖼 حالا **تصویر دوم (لوگوی اسم فیلم به صورت PNG شفاف)** را بفرستید:")
+        else:
+            bot.reply_to(message, "❌ لطفاً تصویر بک‌گراند را به صورت عکس ارسال کنید.")
+        return
+
+    # 3. دریافت تصویر دوم (لوگو)
+    if current_state == "waiting_cover_logo":
+        if message.photo:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            logo_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_logo.png")
+            with open(logo_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+            
+            cover_data[user_id]["logo"] = logo_path
+            user_states[user_id] = "waiting_cover_subtitle"
+            bot.reply_to(message, "✅ لوگو ذخیره شد.\n\n💬 حالا **متن اول (مثل: زیرنویس فارسی بدون سانسور یا دوبله فارسی)** را بفرستید:")
+        else:
+            bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس ارسال کنید.")
+        return
+
+    # 4. دریافت متن اول (زیرنویس/دوبله) و تولید نهایی کاور
+    if current_state == "waiting_cover_subtitle":
+        if text:
+            subtitle_text = text
+            bg_path = cover_data[user_id].get("bg")
+            logo_path = cover_data[user_id].get("logo")
+
+            status_msg = bot.reply_to(message, "🎨 در حال ساخت و ترکیب کاور حرفه‌ای...")
+
+            try:
+                # پردازش تصویر با Pillow
+                bg = Image.open(bg_path).convert("RGBA")
+                logo = Image.open(logo_path).convert("RGBA")
+
+                # اندازه استاندارد خروجی
+                base_width = 1280
+                w_percent = (base_width / float(bg.size[0]))
+                h_size = int(float(bg.size[1]) * float(w_percent))
+                bg = bg.resize((base_width, h_size), Image.Resampling.LANCZOS)
+
+                draw = ImageDraw.Draw(bg)
+                
+                # تنظیم فونت پیش‌فرض سیستم (یا استفاده از سایز مناسب)
+                try:
+                    font_netflix = ImageFont.truetype("arial.ttf", 45)
+                    font_sub = ImageFont.truetype("arial.ttf", 36)
+                except:
+                    font_netflix = ImageFont.load_default()
+                    font_sub = ImageFont.load_default()
+
+                # مختصات قرارگیری عناصر مشابه نمونه ارسالی
+                # 1. درج لوگوی NETFLIXSIT1 دقیقاً بالای لوگوی فیلم
+                logo_x, logo_y = 100, int(bg.size[1] * 0.45) # موقعیت حدودی لوگوی فیلم
+                
+                # چسباندن لوگوی فیلم روی بک‌گراند
+                logo_w = int(bg.size[0] * 0.35)
+                logo_h = int(logo.size[1] * (logo_w / logo.size[0]))
+                logo = logo.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+                
+                # موقعیت چسباندن لوگوی فیلم
+                final_logo_x = 80
+                final_logo_y = logo_y
+                bg.paste(logo, (final_logo_x, final_logo_y), logo)
+
+                # نوشتن متن NETFLIXSIT1 بالای لوگوی فیلم با رنگ فیروزه‌ای/آبی روشن
+                draw.text((final_logo_x, final_logo_y - 60), "NETFLIXSIT1", fill=(0, 220, 220), font=font_netflix)
+
+                # نوشتن متن‌های پایین (زیرنویس و متن ثابت)
+                text_x = 80
+                text_y = final_logo_y + logo_h + 30
+                
+                draw.text((text_x, text_y), subtitle_text, fill=(255, 255, 255), font=font_sub)
+                draw.text((text_x, text_y + 45), "دانلود شده از چنل نتفلیکس سایت", fill=(0, 220, 220), font=font_sub)
+
+                output_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_output.jpg")
+                bg.convert("RGB").save(output_path, "JPEG", quality=95)
+
+                with open(output_path, 'rb') as photo:
+                    bot.send_photo(message.chat.id, photo, caption="✅ کاور شما با موفقیت ساخته شد!\n🤖 t.me/zeucdl_bot", reply_markup=get_main_menu_markup())
+                
+                bot.delete_message(message.chat.id, status_msg.message_id)
+            except Exception as e:
+                bot.edit_message_text(f"❌ خطا در ساخت کاور: {str(e)}", message.chat.id, status_msg.message_id)
+
+            user_states.pop(user_id, None)
+            cover_data.pop(user_id, None)
+        else:
+            bot.reply_to(message, "❌ لطفاً متن زیرنویس یا دوبله را ارسال کنید.")
+        return
+
+    # پردازش سایر لینک‌ها (اینستاگرام، موزیک و غیره)
     if not (text.startswith("http://") or text.startswith("https://")):
         bot.reply_to(message, "❌ لطفا ابتدا یکی از دکمه‌های منوی زیر را انتخاب کنید و سپس لینک بفرستید:", reply_markup=get_main_menu_markup())
         return
 
-    current_state = user_states.get(user_id)
     status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
     
     try:
@@ -290,34 +382,9 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-        elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
-            ydl_opts = {
-                'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['android']}}
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(text, download=False)
-                formats = info.get('formats', [])
-                
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                added_resolutions = set()
-                
-                for f in formats:
-                    if f.get('vcodec') != 'none' and f.get('height'):
-                        res = f'{f.get("height")}p'
-                        format_id = f.get('format_id')
-                        if res not in added_resolutions and int(f.get('height')) <= 1080:
-                            added_resolutions.add(res)
-                            markup.add(types.InlineKeyboardButton(f"📥 کیفیت {res}", callback_data=f"yt_{format_id}_{text}"))
-                
-                bot.edit_message_text("🎬 کیفیت مورد نظر خود را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=markup)
-            user_states.pop(user_id, None)
-            return
-
         elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال دریافت فایل صوتی بدون خطای DRM...", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("🎧 در حال دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
             
-            # دور زدن کامل قفل DRM اسپاتیفای با استخراج امن عنوان از متادیتا صفحه
             target_url = text
             if "spotify.com" in text:
                 try:
@@ -327,9 +394,7 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m:
-                        # استخراج نام آهنگ و استفاده از ساندکلود یا سرورهای عمومی برای دانلود صوتی
-                        song_title = m.group(1)
-                        target_url = f"scsearch:{song_title}"
+                        target_url = f"scsearch:{m.group(1)}"
                 except:
                     target_url = text
 
@@ -348,10 +413,7 @@ def handle_all_requests(message):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info:
-                    if len(info['entries']) > 0:
-                        info = info['entries'][0]
-                    else:
-                        raise Exception("موزیکی یافت نشد.")
+                    info = info['entries'][0]
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
             
             if os.path.exists(file_path):
