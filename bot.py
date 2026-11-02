@@ -2,6 +2,7 @@ import os
 import shutil
 import threading
 import json
+import re
 import telebot
 import yt_dlp
 import instaloader
@@ -21,7 +22,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Instagram Downloader Bot is running live!"
+    return "🤖 Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -111,10 +112,11 @@ def send_welcome(message):
     bot.reply_to(
         message,
         "سلام! 🤖\n"
-        "به ربات حرفه‌ای دانلود از اینستاگرام خوش آمدید.\n\n"
-        "📌 **راهنمای استفاده:**\n"
-        "1️⃣ لینک پست، ریلز یا استوری را بفرستید تا ویدیو/عکس + کپشن آن را دریافت کنید.\n"
-        "2️⃣ آیدی یک پیج عمومی را بفرستید تا آخرین پست‌های آن دریافت شوند.",
+        "به ربات جامع دانلود رسانه خوش آمدید.\n\n"
+        "📌 **امکانات ربات:**\n"
+        "📥 **اینستاگرام:** دانلود پست، ریلز، استوری، هایلایت، عکس و اسلایدی به همراه کپشن\n"
+        "🎵 **اسپاتیفای و ساندکلود:** دریافت لینک و ارسال فایل صوتی\n"
+        "▶️ **یوتیوب:** ارسال لینک و انتخاب کیفیت دلخواه (زیر ۵۱۲ مگابایت)",
         reply_markup=markup
     )
 
@@ -177,8 +179,56 @@ def process_save_channel(message):
         save_settings(settings)
         bot.reply_to(message, f"✅ کانال قفل با موفقیت روی `{text}` تنظیم شد.")
 
+# انتخاب کیفیت یوتیوب
+@bot.callback_query_handler(func=lambda call: call.data.startswith("yt_"))
+def callback_yt_download(call):
+    try:
+        data_parts = call.data.split("_")
+        format_id = data_parts[1]
+        # استخراج بقیه به عنوان URL
+        url = "_".join(data_parts[2:])
+        
+        bot.answer_callback_query(call.id, "⏳ در حال دانلود ویدیو با کیفیت انتخابی...")
+        status_msg = bot.send_message(call.message.chat.id, "📥 در حال آماده‌سازی و ارسال ویدیو...")
+        
+        ydl_opts = {
+            'format': f'{format_id}+bestaudio/best',
+            'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+            'merge_output_format': 'mp4',
+            'quiet': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+            if not os.path.exists(file_path):
+                # اگر فرمت مرج نشد
+                file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+            
+            # بررسی سایز فایل (زیر ۵۱۲ مگابایت)
+            if os.path.exists(file_path):
+                file_size = os.path.getsize(file_path) / (1024 * 1024)
+                if file_size > 512:
+                    bot.reply_to(call.message, "❌ حجم ویدیو بیشتر از ۵۱۲ مگابایت است و قابل ارسال نیست.")
+                else:
+                    with open(file_path, 'rb') as vid:
+                        bot.send_video(call.message.chat.id, vid, caption="✅ دانلود ویدیو از یوتیوب با موفقیت انجام شد.")
+            else:
+                bot.reply_to(call.message, "❌ خطا در پیدا کردن فایل دانلود شده.")
+                
+        try:
+            bot.delete_message(call.message.chat.id, status_msg.message_id)
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+            
+    except Exception as e:
+        bot.reply_to(call.message, f"❌ خطا در دانلود یوتیوب: {str(e)}")
+    finally:
+        clear_downloads()
+
 @bot.message_handler(func=lambda message: True)
-def handle_instagram_request(message):
+def handle_all_requests(message):
     save_user(message)
     settings = load_settings()
     channel = settings.get("channel")
@@ -188,49 +238,18 @@ def handle_instagram_request(message):
 
     text = message.text.strip()
     
-    if text.startswith("http://") or text.startswith("https://"):
-        status_msg = bot.reply_to(message, "⏳ در حال دانلود ویدیو...")
-        try:
-            ydl_opts = {
-                'format': 'best',
-                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-                'quiet': True,
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(text, download=True)
-                file_path = ydl.prepare_filename(info)
-                caption_text = info.get('description', 'کپشنی یافت نشد.')
-
-            with open(file_path, 'rb') as video:
-                bot.send_video(
-                    message.chat.id, 
-                    video, 
-                    caption=f"✅ دانلود با موفقیت انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}"
-                )
-            
-            bot.delete_message(message.chat.id, status_msg.message_id)
-            
-        except Exception as e:
-            bot.reply_to(message, f"❌ خطا در دانلود لینک:\n{str(e)}")
-            
-        finally:
-            clear_downloads()
-            
-    else:
+    if not (text.startswith("http://") or text.startswith("https://")):
+        # اگر آیدی پیج اینستاگرام بود
         username = text.replace("@", "").strip()
         status_msg = bot.reply_to(message, f"⏳ در حال استخراج پست‌های پیج `{username}`...")
-        
         try:
             profile = instaloader.Profile.from_username(L.context, username)
-            
             bot.send_photo(
                 message.chat.id, 
                 profile.profile_pic_url, 
                 caption=f"👤 **{profile.username}**\n👥 فالوور: {profile.followers}\n📝 بیو: {profile.biography}",
                 parse_mode="Markdown"
             )
-            
             count = 0
             for post in profile.get_posts():
                 if count >= 3:
@@ -252,17 +271,116 @@ def handle_instagram_request(message):
                             sent_files += 1
                         except:
                             pass
-            
             if sent_files == 0:
                 bot.reply_to(message, "⚠️ پستی یافت نشد یا پیج پرایویت است.")
-                
             bot.delete_message(message.chat.id, status_msg.message_id)
-            
         except Exception as e:
             bot.reply_to(message, f"❌ خطا در پردازش پیج:\n{str(e)}")
-            
         finally:
             clear_downloads()
+        return
+
+    # پردازش لینک‌های وب (یوتیوب، اسپاتیفای، ساندکلود، اینستاگرام)
+    status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
+    
+    try:
+        # تشخیص یوتیوب
+        if "youtube.com" in text or "youtu.be" in text:
+            ydl_opts = {'quiet': True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(text, download=False)
+                formats = info.get('formats', [])
+                
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                added_resolutions = set()
+                
+                for f in formats:
+                    if f.get('vcodec') != 'none' and f.get('height'):
+                        res = f'{f.get("height")}p'
+                        format_id = f.get('format_id')
+                        if res not in added_resolutions and int(f.get('height')) <= 1080:
+                            added_resolutions.add(res)
+                            markup.add(types.InlineKeyboardButton(f"📥 کیفیت {res}", callback_data=f"yt_{format_id}_{text}"))
+                
+                bot.edit_message_text("🎬 لطفا کیفیت مورد نظر خود را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=markup)
+            return
+
+        # تشخیص اسپاتیفای یا ساندکلود
+        elif "spotify.com" in text or "soundcloud.com" in text:
+            bot.edit_message_text("🎧 در حال دانلود فایل صوتی...", message.chat.id, status_msg.message_id)
+            ydl_opts = {
+                'format': 'bestaudio',
+                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'quiet': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(text, download=True)
+                file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+            
+            if os.path.exists(file_path):
+                with open(file_path, 'rb') as audio:
+                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده با موفقیت")
+                bot.delete_message(message.chat.id, status_msg.message_id)
+            else:
+                bot.edit_message_text("❌ خطا در دانلود فایل صوتی.", message.chat.id, status_msg.message_id)
+            clear_downloads()
+            return
+
+        # تشخیص اینستاگرام (پست، ریلز، استوری، هایلایت، عکس، اسلایدی)
+        elif "instagram.com" in text:
+            match = re.search(r'/(?:p|reel|tv|stories)/([^/?#&]+)', text)
+            if not match:
+                bot.edit_message_text("❌ لینک اینستاگرام معتبر نیست.", message.chat.id, status_msg.message_id)
+                return
+            
+            shortcode = match.group(1)
+            try:
+                post = instaloader.Post.from_shortcode(L.context, shortcode)
+                caption_text = post.caption or "کپشنی یافت نشد."
+                L.download_post(post, target=shortcode)
+                
+                target_dir = os.path.join(DOWNLOAD_DIR, shortcode)
+                sent_count = 0
+                if os.path.exists(target_dir):
+                    for root, dirs, files in os.walk(target_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            if file.endswith(('.mp4', '.jpg', '.jpeg')):
+                                try:
+                                    with open(file_path, 'rb') as f:
+                                        if file.endswith('.mp4'):
+                                            bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
+                                        else:
+                                            bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
+                                    sent_count += 1
+                                except:
+                                    pass
+                
+                if sent_count == 0:
+                    bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
+                else:
+                    bot.delete_message(message.chat.id, status_msg.message_id)
+            except Exception as e:
+                bot.edit_message_text(f"❌ خطا در دانلود اینستاگرام: {str(e)}", message.chat.id, status_msg.message_id)
+            finally:
+                clear_downloads()
+            return
+
+        else:
+            bot.edit_message_text("❌ لینک وارد شده پشتیبانی نمی‌شود.", message.chat.id, status_msg.message_id)
+
+    except Exception as e:
+        try:
+            bot.edit_message_text(f"❌ خطا در پردازش درخواست: {str(e)}", message.chat.id, status_msg.message_id)
+        except:
+            pass
+    finally:
+        clear_downloads()
 
 if __name__ == "__main__":
     web_thread = threading.Thread(target=run_web)
