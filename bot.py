@@ -15,11 +15,14 @@ SETTINGS_FILE = "settings.json"
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
+# دیکشنری برای ذخیره حالت انتخابی هر کاربر (تفکیک‌شده)
+user_states = {}
+
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Clean & Stable Multi-Downloader Bot is running live!"
+    return "🤖 Segmented Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -92,22 +95,47 @@ def send_welcome(message):
         bot.reply_to(message, f"⚠️ برای استفاده از ربات ابتدا باید در کانال ما عضو شوید:\n{channel}\n\nسپس روی دکمه‌ی زیر کلیک کنید.", reply_markup=markup)
         return
 
-    markup = None
+    # منوی شیشه‌ای تفکیک‌شده برای انتخاب بخش
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📸 دانلود اینستاگرام", callback_data="menu_insta"),
+        types.InlineKeyboardButton("▶️ دانلود یوتیوب", callback_data="menu_youtube"),
+        types.InlineKeyboardButton("🎵 اسپاتیفای / ساندکلود", callback_data="menu_music")
+    )
+
+    admin_markup = None
     if message.from_user.id == ADMIN_ID:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("📊 آمار کاربران"), types.KeyboardButton("📢 ارسال پیام همگانی"))
-        markup.add(types.KeyboardButton("⚙️ تنظیم کانال قفل"))
+        admin_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        admin_markup.add(types.KeyboardButton("📊 آمار کاربران"), types.KeyboardButton("📢 ارسال پیام همگانی"))
+        admin_markup.add(types.KeyboardButton("⚙️ تنظیم کانال قفل"))
 
     bot.reply_to(
         message,
         "سلام! 🤖\n"
-        "به ربات جامع دانلود رسانه خوش آمدید.\n\n"
-        "📌 لینک خود را از پلتفرم‌های زیر بفرستید:\n"
-        "📸 **اینستاگرام:** پست و ریلز\n"
-        "▶️ **یوتیوب:** با انتخاب کیفیت دلخواه (زیر ۵۱۲ مگ)\n"
-        "🎵 **اسپاتیفای و ساندکلود:** دریافت فایل صوتی باکیفیت",
+        "به ربات پیشرفته دانلود رسانه خوش آمدید.\n\n"
+        "👇 **لطفاً بخش مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
         reply_markup=markup
     )
+    if admin_markup:
+        bot.send_message(message.chat.id, "🛠 پنل مدیریت:", reply_markup=admin_markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
+def callback_menu_selection(call):
+    user_id = call.from_user.id
+    action = call.data.replace("menu_", "")
+    
+    if action == "insta":
+        user_states[user_id] = "waiting_insta"
+        text = "📸 **بخش اینستاگرام انتخاب شد.**\n\nحالا لینک پست، ریلز یا عکس اینستاگرام خود را بفرستید:"
+    elif action == "youtube":
+        user_states[user_id] = "waiting_youtube"
+        text = "▶️ **بخش یوتیوب انتخاب شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
+    elif action == "music":
+        user_states[user_id] = "waiting_music"
+        text = "🎵 **بخش اسپاتیفای و ساندکلود انتخاب شد.**\n\nحالا لینک موزیک خود را بفرستید:"
+        
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check_sub(call):
@@ -214,24 +242,26 @@ def callback_yt_download(call):
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_requests(message):
+    user_id = message.from_user.id
     save_user(message)
     settings = load_settings()
     channel = settings.get("channel")
-    if channel and not check_membership(message.from_user.id):
+    if channel and not check_membership(user_id):
         bot.reply_to(message, "⚠️ لطفا ابتدا در کانال ربات عضو شوید.")
         return
 
     text = message.text.strip()
     
     if not (text.startswith("http://") or text.startswith("https://")):
-        bot.reply_to(message, "❌ لطفا یک لینک معتبر ارسال کنید.")
+        bot.reply_to(message, "❌ لطفا ابتدا از منوی اصلی یک بخش را انتخاب کرده و سپس لینک معتبر بفرستید یا /start را بزنید.")
         return
 
-    status_msg = bot.reply_to(message, "⏳ در حال پردازش هوشمند لینک...")
+    current_state = user_states.get(user_id)
+    status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
     
     try:
-        # پردازش اینستاگرام و یوتیوب و موزیک به صورت ایمن
-        if "instagram.com" in text:
+        # اگر کاربر بخش اینستاگرام را انتخاب کرده بود
+        if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
@@ -252,9 +282,11 @@ def handle_all_requests(message):
                 bot.delete_message(message.chat.id, status_msg.message_id)
             else:
                 bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
+            user_states.pop(user_id, None)
             return
 
-        elif "youtube.com" in text or "youtu.be" in text:
+        # اگر کاربر بخش یوتیوب را انتخاب کرده بود
+        elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=False)
@@ -272,12 +304,13 @@ def handle_all_requests(message):
                             markup.add(types.InlineKeyboardButton(f"📥 کیفیت {res}", callback_data=f"yt_{format_id}_{text}"))
                 
                 bot.edit_message_text("🎬 کیفیت مورد نظر خود را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=markup)
+            user_states.pop(user_id, None)
             return
 
-        elif "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
+        # اگر کاربر بخش موزیک را انتخاب کرده بود
+        elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
+            bot.edit_message_text("🎧 در حال جستجو و دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
             
-            # تبدیل لینک اسپاتیفای به جستجوی امن برای دور زدن کامل DRM
             search_query = text
             if "spotify.com" in text:
                 try:
@@ -314,10 +347,11 @@ def handle_all_requests(message):
                 bot.delete_message(message.chat.id, status_msg.message_id)
             else:
                 bot.edit_message_text("❌ خطا در دانلود فایل صوتی.", message.chat.id, status_msg.message_id)
+            user_states.pop(user_id, None)
             return
 
         else:
-            bot.edit_message_text("❌ لینک وارد شده پشتیبانی نمی‌شود.", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("❌ لطفا ابتدا از طریق دستور /start روی دکمه‌ی بخش مربوطه کلیک کنید.", message.chat.id, status_msg.message_id)
 
     except Exception as e:
         try:
