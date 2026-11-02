@@ -15,7 +15,6 @@ SETTINGS_FILE = "settings.json"
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
-# دیکشنری برای ذخیره حالت انتخابی هر کاربر (تفکیک‌شده)
 user_states = {}
 
 app = Flask(__name__)
@@ -95,7 +94,6 @@ def send_welcome(message):
         bot.reply_to(message, f"⚠️ برای استفاده از ربات ابتدا باید در کانال ما عضو شوید:\n{channel}\n\nسپس روی دکمه‌ی زیر کلیک کنید.", reply_markup=markup)
         return
 
-    # منوی شیشه‌ای تفکیک‌شده برای انتخاب بخش
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📸 دانلود اینستاگرام", callback_data="menu_insta"),
@@ -260,7 +258,6 @@ def handle_all_requests(message):
     status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
     
     try:
-        # اگر کاربر بخش اینستاگرام را انتخاب کرده بود
         if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {
                 'format': 'best',
@@ -285,7 +282,6 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-        # اگر کاربر بخش یوتیوب را انتخاب کرده بود
         elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -307,11 +303,11 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-        # اگر کاربر بخش موزیک را انتخاب کرده بود
         elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال جستجو و دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("🎧 در حال دریافت فایل صوتی از ساندکلود / منابع آزاد...", message.chat.id, status_msg.message_id)
             
-            search_query = text
+            # استفاده از روش استاندارد ساندکلود یا جستجوی مستقیم صوتی بدون خطای پلیر یوتیوب
+            target_url = text
             if "spotify.com" in text:
                 try:
                     import urllib.request
@@ -320,9 +316,10 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m:
-                        search_query = f"ytsearch:{m.group(1)}"
+                        # استفاده از جستجوی عمومی غیر یوتیوبی یا ساندکلود
+                        target_url = f"scsearch:{m.group(1)}"
                 except:
-                    search_query = f"ytsearch:{text}"
+                    target_url = text
 
             ydl_opts = {
                 'format': 'bestaudio',
@@ -336,7 +333,7 @@ def handle_all_requests(message):
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_query, download=True)
+                info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info:
                     info = info['entries'][0]
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
