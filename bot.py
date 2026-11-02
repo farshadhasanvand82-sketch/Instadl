@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Segmented Multi-Downloader Bot is running live!"
+    return "🤖 Branded Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -81,6 +81,15 @@ def check_membership(user_id):
         pass
     return False
 
+def get_main_menu_markup():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📸 اینستاگرام", callback_data="menu_insta"),
+        types.InlineKeyboardButton("▶️ یوتیوب", callback_data="menu_youtube"),
+        types.InlineKeyboardButton("🎵 اسپاتیفای / ساندکلود", callback_data="menu_music")
+    )
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     save_user(message)
@@ -94,13 +103,6 @@ def send_welcome(message):
         bot.reply_to(message, f"⚠️ برای استفاده از ربات ابتدا باید در کانال ما عضو شوید:\n{channel}\n\nسپس روی دکمه‌ی زیر کلیک کنید.", reply_markup=markup)
         return
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📸 دانلود اینستاگرام", callback_data="menu_insta"),
-        types.InlineKeyboardButton("▶️ دانلود یوتیوب", callback_data="menu_youtube"),
-        types.InlineKeyboardButton("🎵 اسپاتیفای / ساندکلود", callback_data="menu_music")
-    )
-
     admin_markup = None
     if message.from_user.id == ADMIN_ID:
         admin_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -111,8 +113,8 @@ def send_welcome(message):
         message,
         "سلام! 🤖\n"
         "به ربات پیشرفته دانلود رسانه خوش آمدید.\n\n"
-        "👇 **لطفاً بخش مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
-        reply_markup=markup
+        "📌 **برای شروع، لطفاً بخش مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
+        reply_markup=get_main_menu_markup()
     )
     if admin_markup:
         bot.send_message(message.chat.id, "🛠 پنل مدیریت:", reply_markup=admin_markup)
@@ -124,16 +126,20 @@ def callback_menu_selection(call):
     
     if action == "insta":
         user_states[user_id] = "waiting_insta"
-        text = "📸 **بخش اینستاگرام انتخاب شد.**\n\nحالا لینک پست، ریلز یا عکس اینستاگرام خود را بفرستید:"
+        text = "📸 **بخش اینستاگرام فعال شد.**\n\nحالا لینک پست یا ریلز اینستاگرام خود را بفرستید:"
     elif action == "youtube":
         user_states[user_id] = "waiting_youtube"
-        text = "▶️ **بخش یوتیوب انتخاب شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
+        text = "▶️ **بخش یوتیوب فعال شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
     elif action == "music":
         user_states[user_id] = "waiting_music"
-        text = "🎵 **بخش اسپاتیفای و ساندکلود انتخاب شد.**\n\nحالا لینک موزیک خود را بفرستید:"
+        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک اسپاتیفای یا ساندکلود خود را بفرستید:"
         
+    markup = get_main_menu_markup()
     bot.answer_callback_query(call.id)
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+    except:
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check_sub(call):
@@ -204,9 +210,10 @@ def callback_yt_download(call):
         bot.answer_callback_query(call.id, "⏳ در حال دانلود ویدیو...")
         status_msg = bot.send_message(call.message.chat.id, "📥 در حال آماده‌سازی و ارسال ویدیو...")
         
+        # اضافه شدن پیشوند t.me/zeucdl_bot به نام فایل خروجی
         ydl_opts = {
             'format': f'{format_id}+bestaudio/best',
-            'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+            'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
             'merge_output_format': 'mp4',
             'quiet': True,
         }
@@ -223,9 +230,9 @@ def callback_yt_download(call):
                     bot.reply_to(call.message, "❌ حجم ویدیو بیشتر از ۵۱۲ مگابایت است.")
                 else:
                     with open(file_path, 'rb') as vid:
-                        bot.send_video(call.message.chat.id, vid, caption="✅ دانلود ویدیو با موفقیت انجام شد.")
+                        bot.send_video(call.message.chat.id, vid, caption="✅ دانلود ویدیو با موفقیت انجام شد.\n🤖 t.me/zeucdl_bot", reply_markup=get_main_menu_markup())
             else:
-                bot.reply_to(call.message, "❌ خطا در آماده‌سازی فایل.")
+                bot.reply_to(call.message, "❌ خطا در آماده‌سازی فایل.", reply_markup=get_main_menu_markup())
                 
         try:
             bot.delete_message(call.message.chat.id, status_msg.message_id)
@@ -234,7 +241,7 @@ def callback_yt_download(call):
             pass
             
     except Exception as e:
-        bot.reply_to(call.message, f"❌ خطا در دانلود: {str(e)}")
+        bot.reply_to(call.message, f"❌ خطا در دانلود: {str(e)}", reply_markup=get_main_menu_markup())
     finally:
         clear_downloads()
 
@@ -251,7 +258,7 @@ def handle_all_requests(message):
     text = message.text.strip()
     
     if not (text.startswith("http://") or text.startswith("https://")):
-        bot.reply_to(message, "❌ لطفا ابتدا از منوی اصلی یک بخش را انتخاب کرده و سپس لینک معتبر بفرستید یا /start را بزنید.")
+        bot.reply_to(message, "❌ لطفا ابتدا یکی از دکمه‌های منوی زیر را انتخاب کنید و سپس لینک بفرستید:", reply_markup=get_main_menu_markup())
         return
 
     current_state = user_states.get(user_id)
@@ -261,7 +268,7 @@ def handle_all_requests(message):
         if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {
                 'format': 'best',
-                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+                'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
                 'quiet': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -275,8 +282,9 @@ def handle_all_requests(message):
                 with open(file_path, 'rb') as vid:
                     markup = types.InlineKeyboardMarkup()
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
-                    bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
+                    bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 bot.delete_message(message.chat.id, status_msg.message_id)
+                bot.send_message(message.chat.id, "👇 برای دانلود بیشتر، یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=get_main_menu_markup())
             else:
                 bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
@@ -304,9 +312,8 @@ def handle_all_requests(message):
             return
 
         elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال دریافت فایل صوتی از ساندکلود / منابع آزاد...", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("🎧 در حال دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
             
-            # استفاده از روش استاندارد ساندکلود یا جستجوی مستقیم صوتی بدون خطای پلیر یوتیوب
             target_url = text
             if "spotify.com" in text:
                 try:
@@ -316,14 +323,13 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m:
-                        # استفاده از جستجوی عمومی غیر یوتیوبی یا ساندکلود
                         target_url = f"scsearch:{m.group(1)}"
                 except:
                     target_url = text
 
             ydl_opts = {
                 'format': 'bestaudio',
-                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
+                'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
@@ -340,15 +346,16 @@ def handle_all_requests(message):
             
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as audio:
-                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده با موفقیت")
+                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده با موفقیت\n🤖 t.me/zeucdl_bot")
                 bot.delete_message(message.chat.id, status_msg.message_id)
+                bot.send_message(message.chat.id, "👇 برای دانلود بیشتر، یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=get_main_menu_markup())
             else:
                 bot.edit_message_text("❌ خطا در دانلود فایل صوتی.", message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
             return
 
         else:
-            bot.edit_message_text("❌ لطفا ابتدا از طریق دستور /start روی دکمه‌ی بخش مربوطه کلیک کنید.", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("❌ لطفا ابتدا یکی از دکمه‌های منو را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=get_main_menu_markup())
 
     except Exception as e:
         try:
