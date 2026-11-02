@@ -2,6 +2,7 @@ import os
 import shutil
 import threading
 import json
+import re
 import telebot
 import yt_dlp
 import instaloader
@@ -16,12 +17,11 @@ SETTINGS_FILE = "settings.json"
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
-# ایجاد سرور وب کوچک برای جلوگیری از خطای پورت در رندر
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Stable Multi-Downloader Bot is running live!"
+    return "🤖 Ultimate Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -111,7 +111,7 @@ def send_welcome(message):
     bot.reply_to(
         message,
         "سلام! 🤖\n"
-        "به ربات پیشرفته دانلود رسانه خوش آمدید.\n\n"
+        "به ربات جامع دانلود رسانه خوش آمدید.\n\n"
         "📌 لینک خود را از پلتفرم‌های زیر بفرستید:\n"
         "📸 **اینستاگرام:** پست، ریلز، عکس و اسلایدی\n"
         "▶️ **یوتیوب:** با انتخاب کیفیت دلخواه (زیر ۵۱۲ مگ)\n"
@@ -178,7 +178,6 @@ def process_save_channel(message):
         save_settings(settings)
         bot.reply_to(message, f"✅ کانال قفل با موفقیت روی `{text}` تنظیم شد.")
 
-# دکمه انتخاب کیفیت یوتیوب
 @bot.callback_query_handler(func=lambda call: call.data.startswith("yt_"))
 def callback_yt_download(call):
     try:
@@ -241,32 +240,36 @@ def handle_all_requests(message):
     status_msg = bot.reply_to(message, "⏳ در حال پردازش هوشمند لینک...")
     
     try:
-        # تشخیص اینستاگرام با روش پایدار yt-dlp
+        # تشخیص اینستاگرام با instaloader (پشتیبانی کامل از عکس، ویدیو، اسلایدی، ریلز)
         if "instagram.com" in text:
-            ydl_opts = {
-                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-                'quiet': True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(text, download=True)
-                caption_text = info.get('description') or info.get('title') or "کپشنی یافت نشد."
+            match = re.search(r'/(?:p|reel|tv|stories)/([^/?#&]+)', text)
+            if not match:
+                bot.edit_message_text("❌ لینک اینستاگرام معتبر نیست.", message.chat.id, status_msg.message_id)
+                return
             
+            shortcode = match.group(1)
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            caption_text = post.caption or "کپشنی یافت نشد."
+            L.download_post(post, target=shortcode)
+            
+            target_dir = os.path.join(DOWNLOAD_DIR, shortcode)
             sent_count = 0
-            for root, dirs, files in os.walk(DOWNLOAD_DIR):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if file.endswith(('.mp4', '.jpg', '.jpeg', '.webp', '.png')):
-                        try:
-                            with open(file_path, 'rb') as f:
-                                markup = types.InlineKeyboardMarkup()
-                                markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
-                                if file.endswith('.mp4'):
-                                    bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
-                                else:
-                                    bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
-                            sent_count += 1
-                        except:
-                            pass
+            if os.path.exists(target_dir):
+                for root, dirs, files in os.walk(target_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if file.endswith(('.mp4', '.jpg', '.jpeg')):
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    markup = types.InlineKeyboardMarkup()
+                                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
+                                    if file.endswith('.mp4'):
+                                        bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
+                                    else:
+                                        bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
+                                sent_count += 1
+                            except:
+                                pass
             
             if sent_count == 0:
                 bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
@@ -274,7 +277,7 @@ def handle_all_requests(message):
                 bot.delete_message(message.chat.id, status_msg.message_id)
             return
 
-        # تشخیص یوتیوب
+        # تشخیص یوتیوب (نمایش دکمه‌های کیفیت)
         elif "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -295,19 +298,20 @@ def handle_all_requests(message):
                 bot.edit_message_text("🎬 کیفیت مورد نظر خود را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=markup)
             return
 
-        # تشخیص اسپاتیفای و ساندکلود با دور زدن کامل خطای DRM
+        # تشخیص اسپاتیفای و ساندکلود با دور زدن کامل DRM
         elif "spotify.com" in text or "soundcloud.com" in text:
             bot.edit_message_text("🎧 در حال آماده‌سازی و دانلود فایل صوتی...", message.chat.id, status_msg.message_id)
             
             target_url = text
             if "spotify.com" in text:
                 try:
-                    with yt_dlp.YoutubeDL({'quiet': True, 'skip_download': True}) as ydl:
+                    ydl_meta_opts = {'quiet': True, 'skip_download': True}
+                    with yt_dlp.YoutubeDL(ydl_meta_opts) as ydl:
                         meta = ydl.extract_info(text, download=False)
-                        track_title = meta.get('title') or meta.get('track')
+                        track_title = meta.get('title') or meta.get('track') or ""
                         artists = meta.get('artist') or ""
                         if track_title:
-                            target_url = f"ytsearch:{artists} - {track_title}"
+                            target_url = f"ytsearch:{artists} {track_title}"
                 except:
                     pass
 
