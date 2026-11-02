@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Fixed YouTube Multi-Downloader Bot is running live!"
+    return "🤖 Stable Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -215,7 +215,8 @@ def callback_yt_download(call):
             'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
+            'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -293,7 +294,8 @@ def handle_all_requests(message):
         elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {
                 'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+                'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
+                'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=False)
@@ -339,7 +341,8 @@ def handle_all_requests(message):
                     'preferredquality': '192',
                 }],
                 'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+                'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'android']}},
+                'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
