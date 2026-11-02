@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Stable Multi-Downloader Bot is running live!"
+    return "🤖 Final Fixed Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -132,7 +132,7 @@ def callback_menu_selection(call):
         text = "▶️ **بخش یوتیوب فعال شد.**\n\nحالا لینک ویدیو یوتیوب خود را بفرستید:"
     elif action == "music":
         user_states[user_id] = "waiting_music"
-        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ اسپاتیفای یا ساندکلود خود را بفرستید:"
+        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ یا آلبوم اسپاتیفای/ساندکلود خود را بفرستید:"
         
     markup = get_main_menu_markup()
     bot.answer_callback_query(call.id)
@@ -315,9 +315,9 @@ def handle_all_requests(message):
             return
 
         elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال دریافت مستقیم فایل صوتی...", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("🎧 در حال دریافت فایل صوتی بدون خطای DRM...", message.chat.id, status_msg.message_id)
             
-            # استخراج مستقیم نام آهنگ بدون جستجوی ابری سنگین
+            # دور زدن کامل قفل DRM اسپاتیفای با استخراج امن عنوان از متادیتا صفحه
             target_url = text
             if "spotify.com" in text:
                 try:
@@ -327,10 +327,11 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m:
-                        # استفاده از لینک مستقیم ساندکلود یا استخراج امن
-                        target_url = text
+                        # استخراج نام آهنگ و استفاده از ساندکلود یا سرورهای عمومی برای دانلود صوتی
+                        song_title = m.group(1)
+                        target_url = f"scsearch:{song_title}"
                 except:
-                    pass
+                    target_url = text
 
             ydl_opts = {
                 'format': 'bestaudio',
@@ -347,7 +348,10 @@ def handle_all_requests(message):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info:
-                    info = info['entries'][0]
+                    if len(info['entries']) > 0:
+                        info = info['entries'][0]
+                    else:
+                        raise Exception("موزیکی یافت نشد.")
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
             
             if os.path.exists(file_path):
