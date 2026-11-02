@@ -2,8 +2,10 @@ import os
 import shutil
 import threading
 import json
+import re
 import telebot
 import yt_dlp
+import instaloader
 from flask import Flask
 from telebot import types
 
@@ -66,6 +68,14 @@ def load_settings():
 
 def save_settings(settings):
     save_json(SETTINGS_FILE, settings)
+
+L = instaloader.Instaloader(
+    dirname_pattern=DOWNLOAD_DIR,
+    download_videos=True,
+    download_video_thumbnails=False,
+    save_metadata=False,
+    compress_json=False
+)
 
 def check_membership(user_id):
     settings = load_settings()
@@ -233,32 +243,36 @@ def handle_all_requests(message):
     status_msg = bot.reply_to(message, "⏳ در حال پردازش هوشمند لینک...")
     
     try:
-        # تشخیص اینستاگرام (پست، ریلز، استوری، هایلایت، اسلایدی)
+        # تشخیص اینستاگرام (پست، ریلز، عکس، اسلایدی با instaloader)
         if "instagram.com" in text:
-            ydl_opts = {
-                'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-                'quiet': True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(text, download=True)
-                caption_text = info.get('description') or info.get('title') or "کپشنی یافت نشد."
+            match = re.search(r'/(?:p|reel|tv|stories)/([^/?#&]+)', text)
+            if not match:
+                bot.edit_message_text("❌ لینک اینستاگرام معتبر نیست.", message.chat.id, status_msg.message_id)
+                return
             
+            shortcode = match.group(1)
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            caption_text = post.caption or "کپشنی یافت نشد."
+            L.download_post(post, target=shortcode)
+            
+            target_dir = os.path.join(DOWNLOAD_DIR, shortcode)
             sent_count = 0
-            for root, dirs, files in os.walk(DOWNLOAD_DIR):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if file.endswith(('.mp4', '.jpg', '.jpeg', '.webp', '.png')):
-                        try:
-                            with open(file_path, 'rb') as f:
-                                markup = types.InlineKeyboardMarkup()
-                                markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
-                                if file.endswith('.mp4'):
-                                    bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
-                                else:
-                                    bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
-                            sent_count += 1
-                        except:
-                            pass
+            if os.path.exists(target_dir):
+                for root, dirs, files in os.walk(target_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if file.endswith(('.mp4', '.jpg', '.jpeg')):
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    markup = types.InlineKeyboardMarkup()
+                                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
+                                    if file.endswith('.mp4'):
+                                        bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
+                                    else:
+                                        bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}", reply_markup=markup)
+                                sent_count += 1
+                            except:
+                                pass
             
             if sent_count == 0:
                 bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
