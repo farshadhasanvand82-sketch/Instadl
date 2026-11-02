@@ -185,7 +185,6 @@ def callback_yt_download(call):
     try:
         data_parts = call.data.split("_")
         format_id = data_parts[1]
-        # استخراج بقیه به عنوان URL
         url = "_".join(data_parts[2:])
         
         bot.answer_callback_query(call.id, "⏳ در حال دانلود ویدیو با کیفیت انتخابی...")
@@ -202,10 +201,8 @@ def callback_yt_download(call):
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
             if not os.path.exists(file_path):
-                # اگر فرمت مرج نشد
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
             
-            # بررسی سایز فایل (زیر ۵۱۲ مگابایت)
             if os.path.exists(file_path):
                 file_size = os.path.getsize(file_path) / (1024 * 1024)
                 if file_size > 512:
@@ -239,7 +236,6 @@ def handle_all_requests(message):
     text = message.text.strip()
     
     if not (text.startswith("http://") or text.startswith("https://")):
-        # اگر آیدی پیج اینستاگرام بود
         username = text.replace("@", "").strip()
         status_msg = bot.reply_to(message, f"⏳ در حال استخراج پست‌های پیج `{username}`...")
         try:
@@ -280,12 +276,51 @@ def handle_all_requests(message):
             clear_downloads()
         return
 
-    # پردازش لینک‌های وب (یوتیوب، اسپاتیفای، ساندکلود، اینستاگرام)
     status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
     
     try:
+        # تشخیص اینستاگرام (اولویت اول برای جلوگیری از تداخل)
+        if "instagram.com" in text:
+            match = re.search(r'/(?:p|reel|tv|stories)/([^/?#&]+)', text)
+            if not match:
+                bot.edit_message_text("❌ لینک اینستاگرام معتبر نیست.", message.chat.id, status_msg.message_id)
+                return
+            
+            shortcode = match.group(1)
+            try:
+                post = instaloader.Post.from_shortcode(L.context, shortcode)
+                caption_text = post.caption or "کپشنی یافت نشد."
+                L.download_post(post, target=shortcode)
+                
+                target_dir = os.path.join(DOWNLOAD_DIR, shortcode)
+                sent_count = 0
+                if os.path.exists(target_dir):
+                    for root, dirs, files in os.walk(target_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            if file.endswith(('.mp4', '.jpg', '.jpeg')):
+                                try:
+                                    with open(file_path, 'rb') as f:
+                                        if file.endswith('.mp4'):
+                                            bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
+                                        else:
+                                            bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
+                                    sent_count += 1
+                                except:
+                                    pass
+                
+                if sent_count == 0:
+                    bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
+                else:
+                    bot.delete_message(message.chat.id, status_msg.message_id)
+            except Exception as e:
+                bot.edit_message_text(f"❌ خطا در دانلود اینستاگرام: {str(e)}", message.chat.id, status_msg.message_id)
+            finally:
+                clear_downloads()
+            return
+
         # تشخیص یوتیوب
-        if "youtube.com" in text or "youtu.be" in text:
+        elif "youtube.com" in text or "youtu.be" in text:
             ydl_opts = {'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=False)
@@ -329,46 +364,6 @@ def handle_all_requests(message):
             else:
                 bot.edit_message_text("❌ خطا در دانلود فایل صوتی.", message.chat.id, status_msg.message_id)
             clear_downloads()
-            return
-
-        # تشخیص اینستاگرام (پست، ریلز، استوری، هایلایت، عکس، اسلایدی)
-        elif "instagram.com" in text:
-            match = re.search(r'/(?:p|reel|tv|stories)/([^/?#&]+)', text)
-            if not match:
-                bot.edit_message_text("❌ لینک اینستاگرام معتبر نیست.", message.chat.id, status_msg.message_id)
-                return
-            
-            shortcode = match.group(1)
-            try:
-                post = instaloader.Post.from_shortcode(L.context, shortcode)
-                caption_text = post.caption or "کپشنی یافت نشد."
-                L.download_post(post, target=shortcode)
-                
-                target_dir = os.path.join(DOWNLOAD_DIR, shortcode)
-                sent_count = 0
-                if os.path.exists(target_dir):
-                    for root, dirs, files in os.walk(target_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            if file.endswith(('.mp4', '.jpg', '.jpeg')):
-                                try:
-                                    with open(file_path, 'rb') as f:
-                                        if file.endswith('.mp4'):
-                                            bot.send_video(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
-                                        else:
-                                            bot.send_photo(message.chat.id, f, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}")
-                                    sent_count += 1
-                                except:
-                                    pass
-                
-                if sent_count == 0:
-                    bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
-                else:
-                    bot.delete_message(message.chat.id, status_msg.message_id)
-            except Exception as e:
-                bot.edit_message_text(f"❌ خطا در دانلود اینستاگرام: {str(e)}", message.chat.id, status_msg.message_id)
-            finally:
-                clear_downloads()
             return
 
         else:
