@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Branded Multi-Downloader Bot is running live!"
+    return "🤖 Fixed YouTube Multi-Downloader Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -210,12 +210,12 @@ def callback_yt_download(call):
         bot.answer_callback_query(call.id, "⏳ در حال دانلود ویدیو...")
         status_msg = bot.send_message(call.message.chat.id, "📥 در حال آماده‌سازی و ارسال ویدیو...")
         
-        # اضافه شدن پیشوند t.me/zeucdl_bot به نام فایل خروجی
         ydl_opts = {
             'format': f'{format_id}+bestaudio/best',
             'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
             'merge_output_format': 'mp4',
             'quiet': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -291,7 +291,10 @@ def handle_all_requests(message):
             return
 
         elif current_state == "waiting_youtube" or "youtube.com" in text or "youtu.be" in text:
-            ydl_opts = {'quiet': True}
+            ydl_opts = {
+                'quiet': True,
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+            }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=False)
                 formats = info.get('formats', [])
@@ -336,6 +339,7 @@ def handle_all_requests(message):
                     'preferredquality': '192',
                 }],
                 'quiet': True,
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
