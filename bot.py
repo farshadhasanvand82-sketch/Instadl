@@ -22,7 +22,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Professional Multi-Downloader & Admin Bot is running live!"
+    return "🤖 Professional Reply Keyboard Bot is running live!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -102,34 +102,23 @@ def check_membership(user_id):
             pass
     return False
 
-def get_main_menu_markup(user_id):
+def get_reply_keyboard(user_id):
     settings = load_settings()
     btn_names = settings.get("btn_names", {})
     btn_order = settings.get("btn_order", ["insta", "music"])
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    buttons = []
+    admins = settings.get("admins", INITIAL_ADMINS)
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard_buttons = []
     for key in btn_order:
         if key == "insta":
-            buttons.append(types.InlineKeyboardButton(btn_names.get("insta", "📸 دانلود اینستاگرام"), callback_data="menu_insta"))
+            keyboard_buttons.append(types.KeyboardButton(btn_names.get("insta", "📸 دانلود اینستاگرام")))
         elif key == "music":
-            buttons.append(types.InlineKeyboardButton(btn_names.get("music", "🎵 دانلود اسپاتیفای/ساندکلود"), callback_data="menu_music"))
+            keyboard_buttons.append(types.KeyboardButton(btn_names.get("music", "🎵 دانلود اسپاتیفای/ساندکلود")))
             
-    markup.add(*buttons)
-    if user_id in settings.get("admins", INITIAL_ADMINS):
-        markup.add(types.InlineKeyboardButton("⚙️ پنل مدیریت پیشرفته", callback_data="menu_admin"))
-    return markup
-
-def get_admin_panel_markup():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📊 آمار کاربران", callback_data="adm_stats"),
-        types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
-        types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
-        types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
-        types.InlineKeyboardButton("🎛 مدیریت و تغییر نام دکمه‌ها", callback_data="adm_buttons_mgmt"),
-        types.InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="adm_back")
-    )
+    markup.add(*keyboard_buttons)
+    if user_id in admins:
+        markup.add(types.KeyboardButton("⚙️ پنل مدیریت پیشرفته"))
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -150,148 +139,9 @@ def send_welcome(message):
 
     bot.reply_to(
         message,
-        "سلام! 🤖\nبه ربات پیشرفته دانلود رسانه خوش آمدید.\n\n📌 **گزینه مورد نظر خود را انتخاب کنید:**",
-        reply_markup=get_main_menu_markup(user_id)
+        "سلام! 🤖\nبه ربات پیشرفته دانلود رسانه خوش آمدید.\n\n📌 **گزینه مورد نظر خود را از کیبورد پایین انتخاب کنید:**",
+        reply_markup=get_reply_keyboard(user_id)
     )
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_router(call):
-    user_id = call.from_user.id
-    data = call.data
-    settings = load_settings()
-    admins = settings.get("admins", INITIAL_ADMINS)
-
-    if is_banned(user_id):
-        bot.answer_callback_query(call.id, "❌ شما مسدود شده‌اید.", show_alert=True)
-        return
-
-    if data == "menu_insta":
-        user_states[user_id] = "waiting_insta"
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("📸 **بخش اینستاگرام فعال شد.**\n\nلینک پست یا ریلز را بفرستید:", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
-
-    elif data == "menu_music":
-        user_states[user_id] = "waiting_music"
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("🎵 **بخش موزیک فعال شد.**\n\nلینک آهنگ را بفرستید:", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
-
-    elif data == "menu_admin":
-        if user_id not in admins:
-            bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
-            return
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات**", call.message.chat.id, call.message.message_id, reply_markup=get_admin_panel_markup())
-
-    elif data == "adm_stats":
-        if user_id not in admins: return
-        users = load_users()
-        total = len(users)
-        banned = sum(1 for u in users.values() if u.get("banned"))
-        ch_list = ", ".join(settings.get("channels", [])) or "ندارد"
-        text = f"📊 **آمار ربات:**\n\n👥 کل کاربران: {total}\n🚫 مسدود شده‌ها: {banned}\n📢 کانال‌های قفل: {ch_list}"
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_admin_panel_markup())
-
-    elif data == "adm_broadcast":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_broadcast"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید:")
-
-    elif data == "adm_channels_mgmt":
-        if user_id not in admins: return
-        ch_list = "\n".join([f"- {c}" for c in settings.get("channels", [])]) or "هیچ کانالی ثبت نشده است."
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("➕ افزودن کانال", callback_data="adm_add_ch"),
-            types.InlineKeyboardButton("➖ حذف کانال", callback_data="adm_remove_ch"),
-            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
-        )
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(f"📢 **مدیریت کانال‌های قفل جوین اجباری:**\n\n{ch_list}", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "adm_add_ch":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_add_channel"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
-
-    elif data == "adm_remove_ch":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_remove_channel"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🗑 آیدی کانالی که می‌خواهید حذف شود را بفرستید:")
-
-    elif data == "adm_users_mgmt":
-        if user_id not in admins: return
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("🚫 مسدود/آزاد کردن کاربر", callback_data="adm_ban_user"),
-            types.InlineKeyboardButton("✉️ ارسال پیام به کاربر", callback_data="adm_msg_user"),
-            types.InlineKeyboardButton("➕ افزودن ادمین جدید", callback_data="adm_add_admin"),
-            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
-        )
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("👥 **بخش مدیریت کاربران و ادمین‌ها:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "adm_ban_user":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_ban_input"
-        bot.answer_callback_query(call.id)
-        bot.send_message(message=call.message, text="🚫 آیدی عددی کاربر را برای مسدود/آزاد کردن بفرستید:")
-
-    elif data == "adm_msg_user":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_user_msg_id"
-        bot.answer_callback_query(call.id)
-        bot.send_message(message=call.message, text="✉️ ابتدا آیدی عددی کاربر را بفرستید:")
-
-    elif data == "adm_add_admin":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_new_admin_id"
-        bot.answer_callback_query(call.id)
-        bot.send_message(message=call.message, text="➕ آیدی عددی کاربر جدید را برای ادمین شدن بفرستید:")
-
-    elif data == "adm_buttons_mgmt":
-        if user_id not in admins: return
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="adm_rename_btn"),
-            types.InlineKeyboardButton("🔀 جابجایی ترتیب دکمه‌ها", callback_data="adm_move_btn"),
-            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
-        )
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("🎛 **مدیریت دکمه‌های منو:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "adm_rename_btn":
-        if user_id not in admins: return
-        user_states[user_id] = "waiting_rename_choice"
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("اینستاگرام", callback_data="rename_insta"),
-            types.InlineKeyboardButton("موزیک", callback_data="rename_music")
-        )
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("✏️ کدام دکمه ویرایش شود؟", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data.startswith("rename_"):
-        if user_id not in admins: return
-        btn_key = data.replace("rename_", "")
-        user_states[user_id] = f"set_name_{btn_key}"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "✍️ نام جدید دکمه را بفرستید:")
-
-    elif data == "adm_move_btn":
-        if user_id not in admins: return
-        order = settings.get("btn_order", ["insta", "music"])
-        user_states[user_id] = "waiting_reorder"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"🔀 ترتیب فعلی دکمه‌ها: `{' , '.join(order)}`\n\nترتیب جدید را با فاصله یا کاما بفرستید (کلیدها: `insta`, `music`):")
-
-    elif data == "adm_back":
-        if user_id not in admins: return
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("📌 **گزینه مورد نظر خود را انتخاب کنید:**", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check_sub(call):
@@ -316,16 +166,29 @@ def handle_all_requests(message):
         bot.reply_to(message, "⚠️ لطفا ابتدا در کانال‌های ربات عضو شوید.")
         return
 
-    current_state = user_states.get(user_id)
     text = message.text.strip() if message.text else ""
+    current_state = user_states.get(user_id)
+    btn_names = settings.get("btn_names", {})
 
-    # پنل مدیریت ادمین
+    # مدیریت پنل ادمین (کیبورد پاسخ)
     if user_id in admins:
+        if text == "⚙️ پنل مدیریت پیشرفته":
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("📊 آمار کاربران", callback_data="adm_stats"),
+                types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
+                types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
+                types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
+                types.InlineKeyboardButton("🎛 تغییر نام دکمه‌ها", callback_data="adm_rename_btn")
+            )
+            bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
+            return
+
         if current_state == "waiting_broadcast":
             for uid in load_users().keys():
                 try: bot.send_message(int(uid), text)
                 except: pass
-            bot.reply_to(message, "✅ پیام همگانی ارسال شد.")
+            bot.reply_to(message, "✅ پیام همگانی ارسال شد.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -334,8 +197,8 @@ def handle_all_requests(message):
             if ch not in settings["channels"]:
                 settings["channels"].append(ch)
                 save_settings(settings)
-                bot.reply_to(message, f"✅ کانال {ch} افزوده شد.")
-            else: bot.reply_to(message, "⚠️ کانال از قبل وجود دارد.")
+                bot.reply_to(message, f"✅ کانال {ch} افزوده شد.", reply_markup=get_reply_keyboard(user_id))
+            else: bot.reply_to(message, "⚠️ کانال از قبل وجود دارد.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -344,8 +207,8 @@ def handle_all_requests(message):
             if ch in settings["channels"]:
                 settings["channels"].remove(ch)
                 save_settings(settings)
-                bot.reply_to(message, f"🗑 کانال {ch} حذف شد.")
-            else: bot.reply_to(message, "❌ کانال یافت نشد.")
+                bot.reply_to(message, f"🗑 کانال {ch} حذف شد.", reply_markup=get_reply_keyboard(user_id))
+            else: bot.reply_to(message, "❌ کانال یافت نشد.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -357,9 +220,9 @@ def handle_all_requests(message):
                     users[target]["banned"] = not users[target].get("banned", False)
                     save_json(USERS_FILE, users)
                     st = "مسدود 🚫" if users[target]["banned"] else "آزاد ✅"
-                    bot.reply_to(message, f"کاربر {target} {st}")
-                else: bot.reply_to(message, "❌ کاربر یافت نشد.")
-            except: bot.reply_to(message, "❌ آیدی نامعتبر.")
+                    bot.reply_to(message, f"کاربر {target} {st}", reply_markup=get_reply_keyboard(user_id))
+                else: bot.reply_to(message, "❌ کاربر یافت نشد.", reply_markup=get_reply_keyboard(user_id))
+            except: bot.reply_to(message, "❌ آیدی نامعتبر.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -372,8 +235,8 @@ def handle_all_requests(message):
             target_id = current_state.replace("send_msg_to_", "")
             try:
                 bot.send_message(int(target_id), f"📩 پیام از طرف مدیریت:\n\n{text}")
-                bot.reply_to(message, "✅ پیام ارسال شد.")
-            except: bot.reply_to(message, "❌ ارسال پیام ناموفق بود.")
+                bot.reply_to(message, "✅ پیام ارسال شد.", reply_markup=get_reply_keyboard(user_id))
+            except: bot.reply_to(message, "❌ ارسال پیام ناموفق بود.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -383,9 +246,9 @@ def handle_all_requests(message):
                 if new_adm not in settings["admins"]:
                     settings["admins"].append(new_adm)
                     save_settings(settings)
-                    bot.reply_to(message, f"✅ ادمین جدید با آیدی {new_adm} افزوده شد.")
-                else: bot.reply_to(message, "⚠️ کاربر از قبل ادمین است.")
-            except: bot.reply_to(message, "❌ آیدی نامعتبر.")
+                    bot.reply_to(message, f"✅ ادمین جدید با آیدی {new_adm} افزوده شد.", reply_markup=get_reply_keyboard(user_id))
+                else: bot.reply_to(message, "⚠️ کاربر از قبل ادمین است.", reply_markup=get_reply_keyboard(user_id))
+            except: bot.reply_to(message, "❌ آیدی نامعتبر.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -393,22 +256,102 @@ def handle_all_requests(message):
             btn_key = current_state.replace("set_name_", "")
             settings["btn_names"][btn_key] = text
             save_settings(settings)
-            bot.reply_to(message, f"✅ نام دکمه با موفقیت تغییر کرد.")
+            bot.reply_to(message, f"✅ نام دکمه با موفقیت تغییر کرد.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
-        elif current_state == "waiting_reorder":
-            new_order = [x.strip() for x in text.replace(",", " ").split() if x.strip() in ["insta", "music"]]
-            if len(new_order) == 2:
-                settings["btn_order"] = new_order
-                save_settings(settings)
-                bot.reply_to(message, "✅ ترتیب دکمه‌ها با موفقیت بروز شد.")
-            else: bot.reply_to(message, "❌ کلیدها نامعتبرند. دو کلید `insta`, `music` را وارد کنید.")
-            user_states.pop(user_id, None)
-            return
+    # بررسی دکمه‌های کیبورد شستی کاربران
+    if text == btn_names.get("insta", "📸 دانلود اینستاگرام"):
+        user_states[user_id] = "waiting_insta"
+        bot.reply_to(message, "📸 **بخش اینستاگرام فعال شد.**\n\nلینک پست یا ریلز را بفرستید:", reply_markup=get_reply_keyboard(user_id))
+        return
+
+    elif text == btn_names.get("music", "🎵 دانلود اسپاتیفای/ساندکلود"):
+        user_states[user_id] = "waiting_music"
+        bot.reply_to(message, "🎵 **بخش موزیک فعال شد.**\n\nلینک آهنگ را بفرستید:", reply_markup=get_reply_keyboard(user_id))
+        return
+
+    # مدیریت دکمه‌های شیشه‌ای پنل ادمین
+    @bot.callback_query_handler(func=lambda call: True)
+    def admin_callback_handler(call):
+        uid = call.from_user.id
+        d = call.data
+        if uid not in settings.get("admins", INITIAL_ADMINS): return
+        
+        if d == "adm_stats":
+            users = load_users()
+            total = len(users)
+            banned = sum(1 for u in users.values() if u.get("banned"))
+            ch_list = ", ".join(settings.get("channels", [])) or "ندارد"
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text(f"📊 **آمار ربات:**\n\n👥 کل کاربران: {total}\n🚫 مسدود شده‌ها: {banned}\n📢 کانال‌های قفل: {ch_list}", call.message.chat.id, call.message.message_id)
+
+        elif d == "adm_broadcast":
+            user_states[uid] = "waiting_broadcast"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید:")
+
+        elif d == "adm_channels_mgmt":
+            ch_list = "\n".join([f"- {c}" for c in settings.get("channels", [])]) or "هیچ کانالی ثبت نشده است."
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("➕ افزودن کانال", callback_data="adm_add_ch"),
+                types.InlineKeyboardButton("➖ حذف کانال", callback_data="adm_remove_ch")
+            )
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text(f"📢 **مدیریت کانال‌های قفل:**\n\n{ch_list}", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+        elif d == "adm_add_ch":
+            user_states[uid] = "waiting_add_channel"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
+
+        elif d == "adm_remove_ch":
+            user_states[uid] = "waiting_remove_channel"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "🗑 آیدی کانال برای حذف را بفرستید:")
+
+        elif d == "adm_users_mgmt":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🚫 مسدود/آزاد کردن کاربر", callback_data="adm_ban_user"),
+                types.InlineKeyboardButton("✉️ ارسال پیام به کاربر", callback_data="adm_msg_user"),
+                types.InlineKeyboardButton("➕ افزودن ادمین جدید", callback_data="adm_add_admin")
+            )
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text("👥 **مدیریت کاربران و ادمین‌ها:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+        elif d == "adm_ban_user":
+            user_states[uid] = "waiting_ban_input"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "🚫 آیدی عددی کاربر را بفرستید:")
+
+        elif d == "adm_msg_user":
+            user_states[uid] = "waiting_user_msg_id"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "✉️ ابتدا آیدی عددی کاربر را بفرستید:")
+
+        elif d == "adm_add_admin":
+            user_states[uid] = "waiting_new_admin_id"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "➕ آیدی عددی کاربر جدید را بفرستید:")
+
+        elif d == "adm_rename_btn":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("تغییر نام دکمه اینستاگرام", callback_data="rename_insta"),
+                types.InlineKeyboardButton("تغییر نام دکمه موزیک", callback_data="rename_music")
+            )
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text("🎛 کدام دکمه ویرایش شود؟", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+        elif d.startswith("rename_"):
+            btn_key = d.replace("rename_", "")
+            user_states[uid] = f"set_name_{btn_key}"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "✍️ نام جدید دکمه را بفرستید:")
 
     if not (text.startswith("http://") or text.startswith("https://")):
-        bot.reply_to(message, "❌ لطفاً ابتدا دکمه‌ای انتخاب کنید و سپس لینک بفرستید:", reply_markup=get_main_menu_markup(user_id))
         return
 
     status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
@@ -427,7 +370,6 @@ def handle_all_requests(message):
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
                     bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n{caption[:800]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 bot.delete_message(message.chat.id, status_msg.message_id)
-                bot.send_message(message.chat.id, "👇 گزینه بعدی:", reply_markup=get_main_menu_markup(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -458,7 +400,6 @@ def handle_all_requests(message):
                 with open(file_path, 'rb') as audio:
                     bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
                 bot.delete_message(message.chat.id, status_msg.message_id)
-                bot.send_message(message.chat.id, "👇 گزینه بعدی:", reply_markup=get_main_menu_markup(user_id))
             user_states.pop(user_id, None)
             return
 
