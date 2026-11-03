@@ -292,7 +292,7 @@ def handle_all_requests(message):
             bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس یا فایل تصویری ارسال کنید.")
         return
 
-    # دریافت متن اول و پردازش صحیح متن فارسی با bidi و arabic_reshaper همراه با سایه
+    # دریافت متن اول و پردازش صحیح و مرتب‌سازی حروف فارسی
     if current_state == "waiting_cover_subtitle":
         if text:
             subtitle_text = text
@@ -312,7 +312,6 @@ def handle_all_requests(message):
 
                 draw = ImageDraw.Draw(bg)
                 
-                # استفاده از فونت استاندارد DejaVuSans (یا پیش‌فرض سیستم لینوکس رندر)
                 font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
                 if not os.path.exists(font_path):
                     font_path = "arial.ttf"
@@ -333,15 +332,15 @@ def handle_all_requests(message):
                 
                 bg.paste(logo, (final_logo_x, final_logo_y), logo)
 
-                # تابع کمکی برای رسم متن با سایه و پشتیبانی کامل فارسی
-                def draw_persian_text_with_shadow(draw_obj, xy, text_str, font_obj, text_color):
+                # تابع اصلاح کامل متن‌های فارسی (حل مشکل برعکس‌بودن و جدا افتادن حروف)
+                def draw_fixed_persian_text(draw_obj, xy, text_str, font_obj, text_color):
                     x, y = xy
-                    # اصلاح و مرتب‌سازی حروف فارسی
+                    # اصلاح اتصال حروف و معکوس کردن جهت برای نمایش درست راست‌به‌راست
                     reshaped_text = arabic_reshaper.reshape(text_str)
                     bidi_text = get_display(reshaped_text)
                     
                     shadow_color = (0, 0, 0, 255)
-                    # ایجاد سایه مشکی دور متن
+                    # ایجاد سایه مشکی دور متن برای خوانایی بالا
                     for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3), (3, 0)]:
                         draw_obj.text((x + dx, y + dy), bidi_text, fill=shadow_color, font=font_obj)
                     # متن اصلی سفید
@@ -350,12 +349,12 @@ def handle_all_requests(message):
                 # چاپ برند بالای لوگو (انگلیسی)
                 draw.text((final_logo_x, final_logo_y - 50), "NETFLIXSIT1", fill=(0, 220, 220, 255), font=font_netflix)
 
-                # چاپ متن‌های فارسی در پایین با پشتیبانی کامل
+                # چاپ متن‌های فارسی با تابع اصلاح‌شده
                 text_x = 70
                 text_y = final_logo_y + logo_h + 30
                 
-                draw_persian_text_with_shadow(draw, (text_x, text_y), subtitle_text, font_sub, (255, 255, 255, 255))
-                draw_persian_text_with_shadow(draw, (text_x, text_y + 45), "دانلود شده از چنل نتفلیکس سایت", font_sub, (255, 255, 255, 255))
+                draw_fixed_persian_text(draw, (text_x, text_y), subtitle_text, font_sub, (255, 255, 255, 255))
+                draw_fixed_persian_text(draw, (text_x, text_y + 45), "دانلود شده از چنل نتفلیکس سایت", font_sub, (255, 255, 255, 255))
 
                 output_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_output.jpg")
                 bg.convert("RGB").save(output_path, "JPEG", quality=95)
