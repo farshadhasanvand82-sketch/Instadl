@@ -2,6 +2,9 @@ import os
 import shutil
 import threading
 import json
+import random
+import base64
+import urllib.request
 import telebot
 import yt_dlp
 from flask import Flask
@@ -74,9 +77,10 @@ def load_settings():
         "admins": INITIAL_ADMINS,
         "btn_names": {
             "insta": "📸 دانلود اینستاگرام",
-            "music": "🎵 دانلود اسپاتیفای/ساندکلود"
+            "music": "🎵 دانلود اسپاتیفای/ساندکلود",
+            "v2ray": "سرور v2rayرایگان"
         },
-        "btn_order": ["insta", "music"]
+        "btn_order": ["insta", "music", "v2ray"]
     }
     data = load_json(SETTINGS_FILE, default_settings)
     if "channels" not in data: data["channels"] = []
@@ -105,7 +109,7 @@ def check_membership(user_id):
 def get_reply_keyboard(user_id):
     settings = load_settings()
     btn_names = settings.get("btn_names", {})
-    btn_order = settings.get("btn_order", ["insta", "music"])
+    btn_order = settings.get("btn_order", ["insta", "music", "v2ray"])
     admins = settings.get("admins", INITIAL_ADMINS)
 
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -115,6 +119,8 @@ def get_reply_keyboard(user_id):
             keyboard_buttons.append(types.KeyboardButton(btn_names.get("insta", "📸 دانلود اینستاگرام")))
         elif key == "music":
             keyboard_buttons.append(types.KeyboardButton(btn_names.get("music", "🎵 دانلود اسپاتیفای/ساندکلود")))
+        elif key == "v2ray":
+            keyboard_buttons.append(types.KeyboardButton(btn_names.get("v2ray", "سرور v2rayرایگان")))
             
     markup.add(*keyboard_buttons)
     if user_id in admins:
@@ -139,7 +145,7 @@ def send_welcome(message):
 
     bot.reply_to(
         message,
-        "سلام! 🤖\nبه ربات پیشرفته دانلود رسانه خوش آمدید.\n\n📌 **گزینه مورد نظر خود را از کیبورد پایین انتخاب کنید:**",
+        "سلام! 🤖\nبه ربات پیشرفته دانلود رسانه و سرور رایگان خوش آمدید.\n\n📌 **گزینه مورد نظر خود را از کیبورد پایین انتخاب کنید:**",
         reply_markup=get_reply_keyboard(user_id)
     )
 
@@ -222,11 +228,21 @@ def callback_router(call):
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "➕ آیدی عددی کاربر جدید را بفرستید:")
 
+    elif data == "adm_buttons_mgmt":
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="adm_rename_btn"),
+            types.InlineKeyboardButton("🔀 جابجایی ترتیب دکمه‌ها", callback_data="adm_move_btn")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text("🎛 **مدیریت دکمه‌های منو:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
     elif data == "adm_rename_btn":
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("تغییر نام دکمه اینستاگرام", callback_data="rename_insta"),
-            types.InlineKeyboardButton("تغییر نام دکمه موزیک", callback_data="rename_music")
+            types.InlineKeyboardButton("تغییر نام اینستاگرام", callback_data="rename_insta"),
+            types.InlineKeyboardButton("تغییر نام موزیک", callback_data="rename_music"),
+            types.InlineKeyboardButton("تغییر نام سرور v2ray", callback_data="rename_v2ray")
         )
         bot.answer_callback_query(call.id)
         bot.edit_message_text("🎛 کدام دکمه ویرایش شود؟", call.message.chat.id, call.message.message_id, reply_markup=markup)
@@ -236,6 +252,12 @@ def callback_router(call):
         user_states[user_id] = f"set_name_{btn_key}"
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "✍️ نام جدید دکمه را بفرستید:")
+
+    elif data == "adm_move_btn":
+        order = settings.get("btn_order", ["insta", "music", "v2ray"])
+        user_states[user_id] = "waiting_reorder"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, f"🔀 ترتیب فعلی دکمه‌ها: `{' , '.join(order)}`\n\nترتیب جدید را با فاصله یا کاما بفرستید (کلیدها: `insta`, `music`, `v2ray`):")
 
 @bot.message_handler(content_types=['text'])
 def handle_all_requests(message):
@@ -263,7 +285,7 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
                 types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
                 types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
-                types.InlineKeyboardButton("🎛 تغییر نام دکمه‌ها", callback_data="adm_rename_btn")
+                types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
             return
@@ -344,7 +366,47 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-    # بررسی دکمه‌های کیبورد شستی کاربران
+        elif current_state == "waiting_reorder":
+            new_order = [x.strip() for x in text.replace(",", " ").split() if x.strip() in ["insta", "music", "v2ray"]]
+            if len(new_order) == 3:
+                settings["btn_order"] = new_order
+                save_settings(settings)
+                bot.reply_to(message, "✅ ترتیب دکمه‌ها با موفقیت بروز شد.", reply_markup=get_reply_keyboard(user_id))
+            else: bot.reply_to(message, "❌ کلیدها نامعتبرند. سه کلید `insta`, `music`, `v2ray` را وارد کنید.", reply_markup=get_reply_keyboard(user_id))
+            user_states.pop(user_id, None)
+            return
+
+    # بررسی دکمه‌ی V2Ray رایگان
+    if text == btn_names.get("v2ray", "سرور v2rayرایگان"):
+        status_msg = bot.reply_to(message, "⏳ در حال دریافت سرور رندوم V2Ray...")
+        try:
+            target_sub_url = "https://me6b3ufugv8gskn177vzefmf908rw8ed.pages.dev/OXx0EpdALNgGwT/sub/raw?app=sing-box"
+            req = urllib.request.Request(target_sub_url, headers={'User-Agent': 'Mozilla/5.0'})
+            response = urllib.request.urlopen(req)
+            content = response.read().decode('utf-8')
+
+            # تلاش برای دیکد کردن Base64 یا استخراج خط به خط کانفیگ‌ها
+            try:
+                decoded_bytes = base64.b64decode(content.strip())
+                content_decoded = decoded_bytes.decode('utf-8')
+                lines = [line.strip() for line in content_decoded.splitlines() if line.strip()]
+            except:
+                lines = [line.strip() for line in content.splitlines() if line.strip()]
+
+            if lines:
+                selected_config = random.choice(lines)
+                bot.delete_message(message.chat.id, status_msg.message_id)
+                bot.reply_to(message, f"🌐 **سرور رایگان V2Ray (رندوم):**\n\n`{selected_config}`", parse_mode="Markdown", reply_markup=get_reply_keyboard(user_id))
+            else:
+                bot.edit_message_text("❌ هیچ سروری یافت نشد.", message.chat.id, status_msg.message_id)
+        except Exception as e:
+            try:
+                bot.edit_message_text(f"❌ خطا در دریافت سرور: {str(e)}", message.chat.id, status_msg.message_id)
+            except:
+                pass
+        return
+
+    # بررسی دکمه‌های اینستاگرام و موزیک
     if text == btn_names.get("insta", "📸 دانلود اینستاگرام"):
         user_states[user_id] = "waiting_insta"
         bot.reply_to(message, "📸 **بخش اینستاگرام فعال شد.**\n\nلینک پست یا ریلز را بفرستید:", reply_markup=get_reply_keyboard(user_id))
@@ -381,7 +443,6 @@ def handle_all_requests(message):
             target_url = text
             if "spotify.com" in text:
                 try:
-                    import urllib.request
                     req = urllib.request.Request(text, headers={'User-Agent': 'Mozilla/5.0'})
                     html = urllib.request.urlopen(req).read().decode('utf-8')
                     import re
