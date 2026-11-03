@@ -23,7 +23,8 @@ DOWNLOAD_DIR = "downloads"
 user_states = {}
 child_bot_instances = {}
 child_bot_threads = {}
-rename_temp_data = {} # ذخیره موقت کانفیگ‌ها برای تغییر نام دسته‌جمعی
+rename_temp_data = {} 
+pro_forward_data = {} # ذخیره موقت اطلاعات کانال‌های مبدأ و مقصد برای بخش حرفه‌ای
 
 app = Flask(__name__)
 
@@ -85,13 +86,19 @@ def load_settings():
             "v2ray": "سرور v2rayرایگان",
             "builder": "ساخت ربات دانلودر"
         },
-        "btn_order": ["insta", "music", "v2ray", "builder"]
+        "btn_order": ["insta", "music", "v2ray", "builder"],
+        "pro_sources": [],
+        "pro_dest": "",
+        "pro_name": "VIP Server"
     }
     data = load_json(SETTINGS_FILE, default_settings)
     if "channels" not in data: data["channels"] = []
     if "admins" not in data: data["admins"] = INITIAL_ADMINS
     if "btn_names" not in data: data["btn_names"] = default_settings["btn_names"]
     if "btn_order" not in data: data["btn_order"] = default_settings["btn_order"]
+    if "pro_sources" not in data: data["pro_sources"] = []
+    if "pro_dest" not in data: data["pro_dest"] = ""
+    if "pro_name" not in data: data["pro_name"] = "VIP Server"
     return data
 
 def save_settings(settings):
@@ -388,6 +395,35 @@ def callback_router(call):
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, f"🔀 ترتیب فعلی دکمه‌ها: `{' , '.join(order)}`\n\nکلیدهای موجود: `insta`, `music`, `v2ray`, `builder`\nترتیب جدید را با فاصله یا کاما بفرستید:")
 
+    elif data == "adm_pro_menu":
+        sources = ", ".join(settings.get("pro_sources", [])) or "تنظیم نشده"
+        dest = settings.get("pro_dest") or "تنظیم نشده"
+        pname = settings.get("pro_name", "VIP Server")
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📥 تنظیم کانال(های) مبدأ", callback_data="pro_set_source"),
+            types.InlineKeyboardButton("📤 تنظیم کانال مقصد", callback_data="pro_set_dest"),
+            types.InlineKeyboardButton("🏷 تغییر نام پیش‌فرض سرورها", callback_data="pro_set_name"),
+            types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(f"⚡️ **بخش مدیریت حرفه‌ای (دریافت اطلاعات):**\n\n📥 مبدأ(ها): `{sources}`\n📤 مقصد: `{dest}`\n🏷 نام جدید سرورها: `{pname}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif data == "pro_set_source":
+        user_states[user_id] = "waiting_pro_source"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "📥 آیدی کانال‌های مبدأ را با کاما یا فاصله بفرستید (مثل `@source1, @source2`):")
+
+    elif data == "pro_set_dest":
+        user_states[user_id] = "waiting_pro_dest"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید (مثل `@mychannel`):")
+
+    elif data == "pro_set_name":
+        user_states[user_id] = "waiting_pro_name"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🏷 نام جدید و دلخواهی که باید روی سرورها ثبت شود را بفرستید:")
+
     elif data == "adm_back":
         if user_id not in admins: return
         bot.answer_callback_query(call.id)
@@ -399,7 +435,8 @@ def callback_router(call):
             types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
-            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers")
+            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
+            types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu") # دکمه حرفه‌ای جدید
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
@@ -411,11 +448,40 @@ def callback_router(call):
 @bot.message_handler(content_types=['text', 'document'])
 def handle_all_requests(message):
     user_id = message.from_user.id
+    settings = load_settings()
+    admins = settings.get("admins", INITIAL_ADMINS)
+
+    # پایش خودکار پیام‌های ورودی از کانال‌های مبدأ (بخش حرفه‌ای / دریافت اطلاعات)
+    if message.chat.type in ['channel', 'supergroup'] and str(message.chat.username or message.chat.id) in [s.replace('@','') for s in settings.get("pro_sources", [])]:
+        text_content = message.text or message.caption or ""
+        if text_content:
+            import re
+            # پیدا کردن انواع کانفیگ‌های v2ray
+            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s]+', text_content)
+            if configs:
+                dest_ch = settings.get("pro_dest")
+                new_name = settings.get("pro_name", "VIP Server")
+                if dest_ch:
+                    import urllib.parse
+                    for idx, cfg in enumerate(configs):
+                        if "#" in cfg:
+                            base_cfg = cfg.rsplit("#", 1)[0]
+                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                            final_cfg = f"{base_cfg}#{encoded_name}"
+                        else:
+                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                            final_cfg = f"{cfg}#{encoded_name}"
+                        
+                        msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
+                        try:
+                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
+                        except Exception as e:
+                            print(f"Error forwarding to channel: {e}")
+        return
+
     if is_banned(user_id): return
     save_user(message)
-    settings = load_settings()
     channels = settings.get("channels", [])
-    admins = settings.get("admins", INITIAL_ADMINS)
 
     is_guest = (user_states.get(user_id) == "guest_mode")
 
@@ -441,6 +507,29 @@ def handle_all_requests(message):
     btn_names = settings.get("btn_names", {})
 
     if user_id in admins and not is_guest:
+        if current_state == "waiting_pro_source":
+            sources = [x.strip() for x in text.replace(",", " ").split() if x.strip()]
+            settings["pro_sources"] = sources
+            save_settings(settings)
+            bot.reply_to(message, f"✅ کانال‌های مبدأ با موفقیت ثبت شدند: {sources}", reply_markup=get_reply_keyboard(user_id))
+            user_states.pop(user_id, None)
+            return
+
+        elif current_state == "waiting_pro_dest":
+            dest = text if text.startswith("@") else "@" + text
+            settings["pro_dest"] = dest
+            save_settings(settings)
+            bot.reply_to(message, f"✅ کانال مقصد با موفقیت تنظیم شد: {dest}", reply_markup=get_reply_keyboard(user_id))
+            user_states.pop(user_id, None)
+            return
+
+        elif current_state == "waiting_pro_name":
+            settings["pro_name"] = text
+            save_settings(settings)
+            bot.reply_to(message, f"✅ نام پیش‌فرض جدید سرورها تنظیم شد روی: `{text}`", reply_markup=get_reply_keyboard(user_id))
+            user_states.pop(user_id, None)
+            return
+
         if current_state == "waiting_servers_for_rename":
             rename_temp_data[user_id] = text
             user_states[user_id] = "waiting_new_server_name"
@@ -489,6 +578,7 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
                 types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
+                types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu"),
                 types.InlineKeyboardButton("🕵️‍♂️ ورود به حالت تست مهمان", callback_data="dummy_guest")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
