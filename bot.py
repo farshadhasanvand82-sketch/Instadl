@@ -21,8 +21,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
 user_states = {}
-child_bot_instances = {}  # نگهداری نمونه ربات‌ها
-child_bot_threads = {}    # نگهداری تردهای فعال ربات‌های فرزند
+child_bot_instances = {}
+child_bot_threads = {}
+rename_temp_data = {} # ذخیره موقت کانفیگ‌ها برای تغییر نام دسته‌جمعی
 
 app = Flask(__name__)
 
@@ -309,7 +310,6 @@ def callback_router(call):
         b_token = data.replace("del_bot_", "")
         child_bots = load_child_bots()
         if b_token in child_bots:
-            # متوقف کردن پولینگ و نمونه ربات فرزند
             if b_token in child_bot_instances:
                 try:
                     child_bot_instances[b_token].stop_polling()
@@ -398,11 +398,17 @@ def callback_router(call):
             types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
             types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
-            types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
+            types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
+            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers") # دکمه جدید
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-@bot.message_handler(content_types=['text'])
+    elif data == "adm_rename_servers":
+        user_states[user_id] = "waiting_servers_for_rename"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🏷 لطفاً **لیست سرورهای V2Ray** (کانفیگ‌ها) را به صورت متن یا فایل بفرستید:")
+
+@bot.message_handler(content_types=['text', 'document'])
 def handle_all_requests(message):
     user_id = message.from_user.id
     if is_banned(user_id): return
@@ -420,11 +426,63 @@ def handle_all_requests(message):
         bot.reply_to(message, "⚠️ [حالت تست مهمان] شما به عنوان کاربر عادی باید در کانال عضو باشید. برای خروج /start را بزنید.")
         return
 
-    text = message.text.strip() if message.text else ""
+    # دریافت متن یا محتوای فایل متنی
+    text = ""
+    if message.document:
+        try:
+            file_info = bot.get_file(message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            text = downloaded_file.decode('utf-8')
+        except:
+            text = message.text.strip() if message.text else ""
+    else:
+        text = message.text.strip() if message.text else ""
+
     current_state = user_states.get(user_id)
     btn_names = settings.get("btn_names", {})
 
+    # مدیریت حالت تغییر نام سرورها
     if user_id in admins and not is_guest:
+        if current_state == "waiting_servers_for_rename":
+            rename_temp_data[user_id] = text
+            user_states[user_id] = "waiting_new_server_name"
+            bot.reply_to(message, "✅ سرورها دریافت شدند.\n\n✍️ حالا **نام جدیدی** که می‌خواهید روی تمامی سرورها اعمال شود را ارسال کنید:")
+            return
+
+        elif current_state == "waiting_new_server_name":
+            new_name = text.strip()
+            raw_configs = rename_temp_data.get(user_id, "")
+            
+            # تفکیک خط به خط کانفیگ‌ها
+            lines = [line.strip() for line in raw_configs.splitlines() if line.strip()]
+            updated_lines = []
+            
+            import urllib.parse
+            for config in lines:
+                # تغییر نام در انتهای کانفیگ (بخش هش تگ #) یا اضافه کردن نام جدید
+                if "#" in config:
+                    base_cfg = config.rsplit("#", 1)[0]
+                    encoded_name = urllib.parse.quote(new_name)
+                    updated_lines.append(f"{base_cfg}#{encoded_name}")
+                else:
+                    encoded_name = urllib.parse.quote(new_name)
+                    updated_lines.append(f"{config}#{encoded_name}")
+
+            if updated_lines:
+                output_content = "\n".join(updated_lines)
+                file_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_renamed_servers.npvs")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(output_content)
+
+                with open(file_path, "rb") as doc:
+                    bot.send_document(message.chat.id, doc, caption=f"✅ تغییر نام سرورها با موفقیت انجام شد!\nتعداد سرورها: {len(updated_lines)}\nاسم جدید: `{new_name}`", reply_markup=get_reply_keyboard(user_id))
+            else:
+                bot.reply_to(message, "❌ هیچ کانفیگ معتبری یافت نشد.", reply_markup=get_reply_keyboard(user_id))
+
+            user_states.pop(user_id, None)
+            rename_temp_data.pop(user_id, None)
+            return
+
         if text == "⚙️ پنل مدیریت پیشرفته":
             markup = types.InlineKeyboardMarkup(row_width=2)
             markup.add(
@@ -434,6 +492,7 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
+                types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"), # دکمه جدید
                 types.InlineKeyboardButton("🕵️‍♂️ ورود به حالت تست مهمان", callback_data="dummy_guest")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
@@ -654,7 +713,6 @@ def handle_all_requests(message):
         except: pass
     finally: clear_downloads()
 
-# کارگر ربات‌های فرزند با قابلیت متوقف‌سازی کامل
 def run_child_bot(token):
     try:
         c_bot = telebot.TeleBot(token)
@@ -674,7 +732,7 @@ def run_child_bot(token):
         def child_start(msg):
             uid = msg.from_user.id
             cbots = load_child_bots()
-            if token not in cbots: return # اگر ربات حذف شده بود پاسخ ندهد
+            if token not in cbots: return
             ch = cbots.get(token, {}).get("channel")
             if ch and not check_child_membership(uid, token):
                 markup = types.InlineKeyboardMarkup()
