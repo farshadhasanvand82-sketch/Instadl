@@ -376,11 +376,11 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-    # بررسی دکمه‌ی V2Ray رایگان
+    # بررسی دکمه‌ی V2Ray رایگان با لینک جدید
     if text == btn_names.get("v2ray", "سرور v2rayرایگان"):
-        status_msg = bot.reply_to(message, "⏳ در حال دریافت سرور رندوم V2Ray...")
+        status_msg = bot.reply_to(message, "⏳ در حال دریافت سرور رندوم V2Ray از منبع جدید...")
         try:
-            target_sub_url = "https://me6b3ufugv8gskn177vzefmf908rw8ed.pages.dev/OXx0EpdALNgGwT/sub/raw?app=sing-box"
+            target_sub_url = "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub1.txt"
             req = urllib.request.Request(target_sub_url, headers={'User-Agent': 'Mozilla/5.0'})
             response = urllib.request.urlopen(req)
             content = response.read().decode('utf-8')
@@ -398,7 +398,7 @@ def handle_all_requests(message):
                 bot.delete_message(message.chat.id, status_msg.message_id)
                 bot.reply_to(message, f"🌐 **سرور رایگان V2Ray (رندوم):**\n\n`{selected_config}`", parse_mode="Markdown", reply_markup=get_reply_keyboard(user_id))
             else:
-                bot.edit_message_text("❌ هیچ سروری یافت نشد.", message.chat.id, status_msg.message_id)
+                bot.edit_message_text("❌ هیچ سروری در فایل یافت نشد.", message.chat.id, status_msg.message_id)
         except Exception as e:
             try:
                 bot.edit_message_text(f"❌ خطا در دریافت سرور: {str(e)}", message.chat.id, status_msg.message_id)
