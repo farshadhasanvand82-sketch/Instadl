@@ -376,16 +376,16 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-    # بررسی دکمه‌ی V2Ray رایگان با لینک جدید
+    # بررسی دکمه‌ی V2Ray رایگان با منبع جدید و پایدار
     if text == btn_names.get("v2ray", "سرور v2rayرایگان"):
-        status_msg = bot.reply_to(message, "⏳ در حال دریافت سرور رندوم V2Ray از منبع جدید...")
+        status_msg = bot.reply_to(message, "⏳ در حال دریافت سرور رندوم V2Ray...")
         try:
-            target_sub_url = "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub1.txt"
+            target_sub_url = "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/mix"
             req = urllib.request.Request(target_sub_url, headers={'User-Agent': 'Mozilla/5.0'})
             response = urllib.request.urlopen(req)
             content = response.read().decode('utf-8')
 
-            # تلاش برای دیکد کردن Base64 یا استخراج خط به خط کانفیگ‌ها
+            # دیکد کردن بیس ۶۴ یا استخراج خط به خط کانفیگ‌ها
             try:
                 decoded_bytes = base64.b64decode(content.strip())
                 content_decoded = decoded_bytes.decode('utf-8')
