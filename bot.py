@@ -204,20 +204,14 @@ def callback_router(call):
     elif data == "adm_broadcast":
         user_states[user_id] = "waiting_broadcast"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید (برای ربات اصلی یا ربات‌های فرزند؟)", reply_markup=types.InlineKeyboardMarkup().add(
-            types.InlineKeyboardButton("📤 پیام همگانی ربات اصلی", callback_data="bc_main"),
-            types.InlineKeyboardButton("🤖 پیام همگانی ربات‌های فرزند", callback_data="bc_child")
+        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید:", reply_markup=types.InlineKeyboardMarkup().add(
+            types.InlineKeyboardButton("📤 پیام همگانی ربات اصلی", callback_data="bc_main")
         ))
 
     elif data == "bc_main":
         user_states[user_id] = "waiting_main_broadcast"
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "💬 متن پیام همگانی برای کاربران ربات اصلی را بفرستید:")
-
-    elif data == "bc_child":
-        user_states[user_id] = "waiting_child_broadcast"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی برای کاربرانِ تمامی ربات‌های فرزند را بفرستید:")
 
     elif data == "adm_channels_mgmt":
         channels = settings.get("channels", [])
@@ -284,7 +278,6 @@ def callback_router(call):
             return
         
         for b_token, b_info in child_bots.items():
-            masked_token = b_token[:8] + "..."
             ch_status = b_info.get('channel') or 'ندارد'
             markup.add(types.InlineKeyboardButton(f"🤖 @{b_info['username']} | قفل: {ch_status}", callback_data=f"manage_child_{b_token}"))
         markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back"))
@@ -318,7 +311,6 @@ def callback_router(call):
             del child_bots[b_token]
             save_child_bots(child_bots)
             bot.answer_callback_query(call.id, "✅ ربات با موفقیت حذف شد!", show_alert=True)
-            # بازگشت به لیست
             markup = types.InlineKeyboardMarkup(row_width=1)
             for tk, inf in child_bots.items():
                 markup.add(types.InlineKeyboardButton(f"🤖 @{inf['username']}", callback_data=f"manage_child_{tk}"))
@@ -450,20 +442,6 @@ def handle_all_requests(message):
             user_states.pop(user_id, None)
             return
 
-        elif current_state == "waiting_child_broadcast":
-            child_bots = load_child_bots()
-            total_sent = 0
-            for tk in child_bots.keys():
-                try:
-                    tmp_b = telebot.TeleBot(tk)
-                    # ارسال به کسانی که ربات فرزند را استارت کرده‌اند (ثبت در دیتابیس فرزند یا مشابه)
-                    # برای سادگی در اینجا به لیست کاربران اصلی یا در صورت ذخیره در دیتابیس فرزند
-                    pass
-                except: pass
-            bot.reply_to(message, "✅ دستور پیام همگانی اجرا شد.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
         elif current_state and current_state.startswith("waiting_child_ch_"):
             b_token = current_state.replace("waiting_child_ch_", "")
             child_bots = load_child_bots()
@@ -550,12 +528,10 @@ def handle_all_requests(message):
     if text == "/start" and user_id in admins:
         user_states.pop(user_id, None)
 
-    # بررسی دکمه سازنده در ربات اصلی یا فرزند
     if text == "👨‍💻 سازنده" or text == "سازنده":
-        bot.reply_to(message, "🤖 **این ربات با استفاده از سیستم پیشرفته ساخت ربات ساخته شده است.**\n\n📌 سازنده و پشتیبان اصلی:\n@izeucs", reply_markup=get_reply_keyboard(user_id))
+        bot.reply_to(message, "🤖 **این ربات با سیستم پیشرفته ساخت ربات ساخته شده است.**\n\n📌 سازنده و پشتیبان اصلی:\n@izeucs", reply_markup=get_reply_keyboard(user_id))
         return
 
-    # بررسی دکمه ساخت ربات دانلودر
     if text == btn_names.get("builder", "ساخت ربات دانلودر"):
         user_states[user_id] = "waiting_bot_token"
         bot.reply_to(message, "🤖 **ساخت ربات دانلودر اختصاصی:**\n\nلطفاً توکن ربات خود را از `@BotFather` بفرستید:", reply_markup=get_reply_keyboard(user_id))
@@ -653,9 +629,9 @@ def handle_all_requests(message):
                 'quiet': True, 'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = yt_dlp.YoutubeDL(ydl_opts).extract_info(target_url, download=True)
+                info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info: info = info['entries'][0]
-                file_path = yt_dlp.YoutubeDL(ydl_opts).prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+                file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as audio:
                     bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
@@ -668,7 +644,7 @@ def handle_all_requests(message):
         except: pass
     finally: clear_downloads()
 
-# کارگر ربات‌های فرزند به همراه دکمه سازنده و قفل کانال اختصاصی
+# سیستم اجرای ربات‌های فرزند (Builder Bot Worker)
 def run_child_bot(token):
     try:
         c_bot = telebot.TeleBot(token)
@@ -748,12 +724,15 @@ def run_child_bot(token):
     except Exception as e:
         print(f"Child bot error for token {token[:8]}...: {e}")
 
+def start_child_bot(token):
+    t = threading.Thread(target=run_child_bot, args=(token,))
+    t.daemon = True
+    t.start()
+
 def init_saved_child_bots():
     child_bots = load_child_bots()
     for token in child_bots.keys():
-        t = threading.Thread(target=run_child_bot, args=(token,))
-        t.daemon = True
-        t.start()
+        start_child_bot(token)
 
 if __name__ == "__main__":
     init_saved_child_bots()
