@@ -399,7 +399,7 @@ def callback_router(call):
             types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
-            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers") # دکمه جدید
+            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers")
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
@@ -426,7 +426,6 @@ def handle_all_requests(message):
         bot.reply_to(message, "⚠️ [حالت تست مهمان] شما به عنوان کاربر عادی باید در کانال عضو باشید. برای خروج /start را بزنید.")
         return
 
-    # دریافت متن یا محتوای فایل متنی
     text = ""
     if message.document:
         try:
@@ -441,7 +440,6 @@ def handle_all_requests(message):
     current_state = user_states.get(user_id)
     btn_names = settings.get("btn_names", {})
 
-    # مدیریت حالت تغییر نام سرورها
     if user_id in admins and not is_guest:
         if current_state == "waiting_servers_for_rename":
             rename_temp_data[user_id] = text
@@ -453,13 +451,11 @@ def handle_all_requests(message):
             new_name = text.strip()
             raw_configs = rename_temp_data.get(user_id, "")
             
-            # تفکیک خط به خط کانفیگ‌ها
             lines = [line.strip() for line in raw_configs.splitlines() if line.strip()]
             updated_lines = []
             
             import urllib.parse
             for config in lines:
-                # تغییر نام در انتهای کانفیگ (بخش هش تگ #) یا اضافه کردن نام جدید
                 if "#" in config:
                     base_cfg = config.rsplit("#", 1)[0]
                     encoded_name = urllib.parse.quote(new_name)
@@ -469,13 +465,13 @@ def handle_all_requests(message):
                     updated_lines.append(f"{config}#{encoded_name}")
 
             if updated_lines:
-                output_content = "\n".join(updated_lines)
-                file_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_renamed_servers.npvs")
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(output_content)
-
-                with open(file_path, "rb") as doc:
-                    bot.send_document(message.chat.id, doc, caption=f"✅ تغییر نام سرورها با موفقیت انجام شد!\nتعداد سرورها: {len(updated_lines)}\nاسم جدید: `{new_name}`", reply_markup=get_reply_keyboard(user_id))
+                bot.reply_to(message, f"🚀 در حال ارسال {len(updated_lines)} سرور با نام جدید...", reply_markup=get_reply_keyboard(user_id))
+                for cfg in updated_lines:
+                    try:
+                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown")
+                    except:
+                        bot.send_message(message.chat.id, cfg)
+                bot.send_message(message.chat.id, "✅ تمامی سرورها با موفقیت ارسال شدند!", reply_markup=get_reply_keyboard(user_id))
             else:
                 bot.reply_to(message, "❌ هیچ کانفیگ معتبری یافت نشد.", reply_markup=get_reply_keyboard(user_id))
 
@@ -492,7 +488,7 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
-                types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"), # دکمه جدید
+                types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
                 types.InlineKeyboardButton("🕵️‍♂️ ورود به حالت تست مهمان", callback_data="dummy_guest")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
