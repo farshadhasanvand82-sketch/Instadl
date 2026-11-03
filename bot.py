@@ -290,7 +290,7 @@ def handle_all_requests(message):
             bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس یا فایل تصویری ارسال کنید.")
         return
 
-    # دریافت متن اول و ساخت نهایی تصویر کاور
+    # دریافت متن اول و ساخت نهایی تصویر کاور با سایه و فونت مناسب
     if current_state == "waiting_cover_subtitle":
         if text:
             subtitle_text = text
@@ -310,29 +310,43 @@ def handle_all_requests(message):
 
                 draw = ImageDraw.Draw(bg)
                 
+                # بارگذاری فونت مناسب با سایزهای دقیق مطابق نمونه
                 try:
-                    font_netflix = ImageFont.truetype("arial.ttf", 45)
+                    font_netflix = ImageFont.truetype("arial.ttf", 46)
                     font_sub = ImageFont.truetype("arial.ttf", 36)
                 except:
                     font_netflix = ImageFont.load_default()
                     font_sub = ImageFont.load_default()
 
-                final_logo_x = 80
-                final_logo_y = int(bg.size[1] * 0.45)
+                # مختصات قرارگیری لوگو و متن‌ها دقیقا مطابق نمونه ارسالی
+                final_logo_x = 70
+                final_logo_y = int(bg.size[1] * 0.42)
                 
-                logo_w = int(bg.size[0] * 0.35)
+                logo_w = int(bg.size[0] * 0.38)
                 logo_h = int(logo.size[1] * (logo_w / logo.size[0]))
                 logo = logo.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
                 
                 bg.paste(logo, (final_logo_x, final_logo_y), logo)
 
-                draw.text((final_logo_x, final_logo_y - 60), "NETFLIXSIT1", fill=(0, 220, 220), font=font_netflix)
+                # تابع کمکی برای ایجاد متن با سایه مشکی جهت خوانایی کامل روی تصویر
+                def draw_text_with_shadow(draw_obj, xy, text_str, font_obj, text_color):
+                    x, y = xy
+                    shadow_color = (0, 0, 0, 240)
+                    # رسم سایه در ۴ جهت اطراف متن
+                    for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3), (3, 0)]:
+                        draw_obj.text((x + dx, y + dy), text_str, fill=shadow_color, font=font_obj)
+                    # رسم متن اصلی روی سایه
+                    draw_obj.text((x, y), text_str, fill=text_color, font=font_obj)
 
-                text_x = 80
-                text_y = final_logo_y + logo_h + 30
+                # نوشتن متن NETFLIXSIT1 با رنگ فیروزه‌ای و سایه مشکی دقیقاً بالای لوگو
+                draw_text_with_shadow(draw, (final_logo_x, final_logo_y - 55), "NETFLIXSIT1", font_netflix, (0, 220, 220, 255))
+
+                # نوشتن متن‌های پایین (زیرنویس و متن چنل) با رنگ سفید و سایه مشکی
+                text_x = 70
+                text_y = final_logo_y + logo_h + 35
                 
-                draw.text((text_x, text_y), subtitle_text, fill=(255, 255, 255), font=font_sub)
-                draw.text((text_x, text_y + 45), "دانلود شده از چنل نتفلیکس سایت", fill=(0, 220, 220), font=font_sub)
+                draw_text_with_shadow(draw, (text_x, text_y), subtitle_text, font_sub, (255, 255, 255, 255))
+                draw_text_with_shadow(draw, (text_x, text_y + 48), "دانلود شده از چنل نتفلیکس سایت", font_sub, (255, 255, 255, 255))
 
                 output_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_output.jpg")
                 bg.convert("RGB").save(output_path, "JPEG", quality=95)
