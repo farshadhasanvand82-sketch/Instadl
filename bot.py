@@ -21,7 +21,8 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
 user_states = {}
-child_bot_instances = {}
+child_bot_instances = {}  # نگهداری نمونه ربات‌ها
+child_bot_threads = {}    # نگهداری تردهای فعال ربات‌های فرزند
 
 app = Flask(__name__)
 
@@ -308,9 +309,18 @@ def callback_router(call):
         b_token = data.replace("del_bot_", "")
         child_bots = load_child_bots()
         if b_token in child_bots:
+            # متوقف کردن پولینگ و نمونه ربات فرزند
+            if b_token in child_bot_instances:
+                try:
+                    child_bot_instances[b_token].stop_polling()
+                except:
+                    pass
+                child_bot_instances.pop(b_token, None)
+            
             del child_bots[b_token]
             save_child_bots(child_bots)
-            bot.answer_callback_query(call.id, "✅ ربات با موفقیت حذف شد!", show_alert=True)
+            
+            bot.answer_callback_query(call.id, "✅ ربات با موفقیت حذف و کاملاً خاموش شد!", show_alert=True)
             markup = types.InlineKeyboardMarkup(row_width=1)
             for tk, inf in child_bots.items():
                 markup.add(types.InlineKeyboardButton(f"🤖 @{inf['username']}", callback_data=f"manage_child_{tk}"))
@@ -629,9 +639,9 @@ def handle_all_requests(message):
                 'quiet': True, 'noplaylist': True,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(target_url, download=True)
+                info = yt_dlp.YoutubeDL(ydl_opts).extract_info(target_url, download=True)
                 if 'entries' in info: info = info['entries'][0]
-                file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+                file_path = yt_dlp.YoutubeDL(ydl_opts).prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as audio:
                     bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
@@ -644,10 +654,11 @@ def handle_all_requests(message):
         except: pass
     finally: clear_downloads()
 
-# سیستم اجرای ربات‌های فرزند (Builder Bot Worker)
+# کارگر ربات‌های فرزند با قابلیت متوقف‌سازی کامل
 def run_child_bot(token):
     try:
         c_bot = telebot.TeleBot(token)
+        child_bot_instances[token] = c_bot
         
         def check_child_membership(uid, tok):
             cbots = load_child_bots()
@@ -663,6 +674,7 @@ def run_child_bot(token):
         def child_start(msg):
             uid = msg.from_user.id
             cbots = load_child_bots()
+            if token not in cbots: return # اگر ربات حذف شده بود پاسخ ندهد
             ch = cbots.get(token, {}).get("channel")
             if ch and not check_child_membership(uid, token):
                 markup = types.InlineKeyboardMarkup()
@@ -689,6 +701,7 @@ def run_child_bot(token):
         def child_handle(msg):
             uid = msg.from_user.id
             cbots = load_child_bots()
+            if token not in cbots: return
             ch = cbots.get(token, {}).get("channel")
             if ch and not check_child_membership(uid, token):
                 c_bot.reply_to(msg, "⚠️ لطفا ابتدا در کانال ربات عضو شوید.")
@@ -719,14 +732,14 @@ def run_child_bot(token):
                 c_bot.reply_to(msg, "لطفاً یک لینک معتبر ارسال کنید.")
 
         c_bot.remove_webhook()
-        child_bot_instances[token] = c_bot
-        c_bot.infinity_polling(none_stop=True)
+        c_bot.infinity_polling(none_stop=True, interval=0, timeout=20)
     except Exception as e:
         print(f"Child bot error for token {token[:8]}...: {e}")
 
 def start_child_bot(token):
     t = threading.Thread(target=run_child_bot, args=(token,))
     t.daemon = True
+    child_bot_threads[token] = t
     t.start()
 
 def init_saved_child_bots():
