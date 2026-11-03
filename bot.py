@@ -4,14 +4,12 @@ import threading
 import json
 import telebot
 import yt_dlp
-from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
-from bidi.algorithm import get_display
 from flask import Flask
 from telebot import types
 
 BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
-ADMIN_IDS = [8886868325, 8250289921] # لیست ادمین‌ها
+INITIAL_ADMINS = [8886868325, 8250289921]
+
 USERS_FILE = "users_data.json"
 SETTINGS_FILE = "settings.json"
 
@@ -19,8 +17,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
 
 user_states = {}
-cover_auth = {}
-cover_data = {}
 
 app = Flask(__name__)
 
@@ -66,42 +62,61 @@ def save_user(message):
     }
     if user_id not in users:
         users[user_id] = user_data
-    else:
-        users[user_id]["first_name"] = message.from_user.first_name or "بدون نام"
-        users[user_id]["username"] = message.from_user.username or "ندارد"
-    save_json(USERS_FILE, users)
+        save_json(USERS_FILE, users)
 
 def is_banned(user_id):
     users = load_users()
     return users.get(str(user_id), {}).get("banned", False)
 
 def load_settings():
-    return load_json(SETTINGS_FILE, {"channel": ""})
+    default_settings = {
+        "channels": [],
+        "admins": INITIAL_ADMINS,
+        "btn_names": {
+            "insta": "📸 دانلود اینستاگرام",
+            "music": "🎵 دانلود اسپاتیفای/ساندکلود"
+        },
+        "btn_order": ["insta", "music"]
+    }
+    data = load_json(SETTINGS_FILE, default_settings)
+    if "channels" not in data: data["channels"] = []
+    if "admins" not in data: data["admins"] = INITIAL_ADMINS
+    if "btn_names" not in data: data["btn_names"] = default_settings["btn_names"]
+    if "btn_order" not in data: data["btn_order"] = default_settings["btn_order"]
+    return data
 
 def save_settings(settings):
     save_json(SETTINGS_FILE, settings)
 
 def check_membership(user_id):
     settings = load_settings()
-    channel = settings.get("channel")
-    if not channel:
+    channels = settings.get("channels", [])
+    if not channels:
         return True
-    try:
-        member = bot.get_chat_member(channel, user_id)
-        if member.status in ['member', 'administrator', 'creator']:
-            return True
-    except:
-        pass
+    for ch in channels:
+        try:
+            member = bot.get_chat_member(ch, user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                return True
+        except:
+            pass
     return False
 
 def get_main_menu_markup(user_id):
+    settings = load_settings()
+    btn_names = settings.get("btn_names", {})
+    btn_order = settings.get("btn_order", ["insta", "music"])
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📸 دانلود اینستاگرام", callback_data="menu_insta"),
-        types.InlineKeyboardButton("🎵 دانلود اسپاتیفای/ساندکلود", callback_data="menu_music"),
-        types.InlineKeyboardButton("🎨 ساخت کاور", callback_data="menu_cover")
-    )
-    if user_id in ADMIN_IDS:
+    buttons = []
+    for key in btn_order:
+        if key == "insta":
+            buttons.append(types.InlineKeyboardButton(btn_names.get("insta", "📸 دانلود اینستاگرام"), callback_data="menu_insta"))
+        elif key == "music":
+            buttons.append(types.InlineKeyboardButton(btn_names.get("music", "🎵 دانلود اسپاتیفای/ساندکلود"), callback_data="menu_music"))
+            
+    markup.add(*buttons)
+    if user_id in settings.get("admins", INITIAL_ADMINS):
         markup.add(types.InlineKeyboardButton("⚙️ پنل مدیریت پیشرفته", callback_data="menu_admin"))
     return markup
 
@@ -110,8 +125,9 @@ def get_admin_panel_markup():
     markup.add(
         types.InlineKeyboardButton("📊 آمار کاربران", callback_data="adm_stats"),
         types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
-        types.InlineKeyboardButton("📢 تنظیم کانال قفل", callback_data="adm_channel"),
-        types.InlineKeyboardButton("🚫 مسدود/آزاد کردن کاربر", callback_data="adm_ban"),
+        types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
+        types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
+        types.InlineKeyboardButton("🎛 مدیریت و تغییر نام دکمه‌ها", callback_data="adm_buttons_mgmt"),
         types.InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="adm_back")
     )
     return markup
@@ -119,330 +135,303 @@ def get_admin_panel_markup():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
-    if is_banned(user_id):
-        return
+    if is_banned(user_id): return
     save_user(message)
     settings = load_settings()
-    channel = settings.get("channel")
+    channels = settings.get("channels", [])
     
-    if channel and not check_membership(user_id):
+    if channels and not check_membership(user_id):
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("📢 عضويت در کانال", url=f"https://t.me/{channel.replace('@','')}"))
+        for ch in channels:
+            markup.add(types.InlineKeyboardButton(f"📢 عضويت در {ch}", url=f"https://t.me/{ch.replace('@','')}"))
         markup.add(types.InlineKeyboardButton("🔄 عضو شدم، بررسی مجدد", callback_data="check_sub"))
-        bot.reply_to(message, f"⚠️ برای استفاده از ربات ابتدا باید در کانال ما عضو شوید:\n{channel}\n\nسپس روی دکمه‌ی زیر کلیک کنید.", reply_markup=markup)
+        bot.reply_to(message, "⚠️ برای استفاده از ربات ابتدا باید در کانال‌های زیر عضو شوید:", reply_markup=markup)
         return
 
     bot.reply_to(
         message,
-        "سلام! 🤖\n"
-        "به ربات پیشرفته ساخت کاور و دانلود رسانه خوش آمدید.\n\n"
-        "📌 **برای شروع، لطفاً گزینه مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**",
+        "سلام! 🤖\nبه ربات پیشرفته دانلود رسانه خوش آمدید.\n\n📌 **گزینه مورد نظر خود را انتخاب کنید:**",
         reply_markup=get_main_menu_markup(user_id)
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_") or call.data.startswith("adm_"))
+@bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
     user_id = call.from_user.id
     data = call.data
+    settings = load_settings()
+    admins = settings.get("admins", INITIAL_ADMINS)
 
     if is_banned(user_id):
-        bot.answer_callback_query(call.id, "❌ شما توسط ادمین مسدود شده‌اید.", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ شما مسدود شده‌اید.", show_alert=True)
         return
 
     if data == "menu_insta":
         user_states[user_id] = "waiting_insta"
-        text = "📸 **بخش اینستاگرام فعال شد.**\n\nحالا لینک پست، ریلز یا عکس اینستاگرام خود را بفرستید:"
         bot.answer_callback_query(call.id)
-        try:
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
-        except:
-            bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu_markup(user_id))
-
-    elif data == "menu_cover":
-        if cover_auth.get(user_id):
-            user_states[user_id] = "waiting_cover_bg"
-            cover_data[user_id] = {}
-            text = "🎨 **بخش ساخت کاور فعال شد.**\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را ارسال کنید:"
-            bot.answer_callback_query(call.id)
-            try:
-                bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
-            except:
-                bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu_markup(user_id))
-        else:
-            user_states[user_id] = "waiting_cover_password"
-            bot.answer_callback_query(call.id)
-            bot.send_message(call.message.chat.id, "🔐 لطفا رمز عبور بخش ساخت کاور را وارد کنید:")
+        bot.edit_message_text("📸 **بخش اینستاگرام فعال شد.**\n\nلینک پست یا ریلز را بفرستید:", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
 
     elif data == "menu_music":
         user_states[user_id] = "waiting_music"
-        text = "🎵 **بخش موزیک فعال شد.**\n\nحالا لینک آهنگ اسپاتیفای یا ساندکلود خود را بفرستید:"
         bot.answer_callback_query(call.id)
-        try:
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
-        except:
-            bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu_markup(user_id))
+        bot.edit_message_text("🎵 **بخش موزیک فعال شد.**\n\nلینک آهنگ را بفرستید:", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
 
     elif data == "menu_admin":
-        if user_id not in ADMIN_IDS:
+        if user_id not in admins:
             bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
             return
         bot.answer_callback_query(call.id)
-        bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات**\n\nگزینه مورد نظر را انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=get_admin_panel_markup())
+        bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات**", call.message.chat.id, call.message.message_id, reply_markup=get_admin_panel_markup())
 
     elif data == "adm_stats":
-        if user_id not in ADMIN_IDS: return
+        if user_id not in admins: return
         users = load_users()
-        settings = load_settings()
         total = len(users)
-        banned_count = sum(1 for u in users.values() if u.get("banned"))
-        channel = settings.get("channel") or "تنظیم نشده"
-        text = f"📊 **آمار ربات:**\n\n👥 کل کاربران: {total}\n🚫 کاربران مسدود: {banned_count}\n📢 کانال قفل: {channel}"
+        banned = sum(1 for u in users.values() if u.get("banned"))
+        ch_list = ", ".join(settings.get("channels", [])) or "ندارد"
+        text = f"📊 **آمار ربات:**\n\n👥 کل کاربران: {total}\n🚫 مسدود شده‌ها: {banned}\n📢 کانال‌های قفل: {ch_list}"
         bot.answer_callback_query(call.id)
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_admin_panel_markup())
 
     elif data == "adm_broadcast":
-        if user_id not in ADMIN_IDS: return
-        user_states[user_id] = "waiting_broadcast_text"
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_broadcast"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی خود را ارسال کنید:")
+        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید:")
 
-    elif data == "adm_channel":
-        if user_id not in ADMIN_IDS: return
-        user_states[user_id] = "waiting_channel_id"
+    elif data == "adm_channels_mgmt":
+        if user_id not in admins: return
+        ch_list = "\n".join([f"- {c}" for c in settings.get("channels", [])]) or "هیچ کانالی ثبت نشده است."
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("➕ افزودن کانال", callback_data="adm_add_ch"),
+            types.InlineKeyboardButton("➖ حذف کانال", callback_data="adm_remove_ch"),
+            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
+        )
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📢 آیدی کانال را با فرمت `@channel` بفرستید (برای غیرفعال کردن `off` بفرستید):")
+        bot.edit_message_text(f"📢 **مدیریت کانال‌های قفل جوین اجباری:**\n\n{ch_list}", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    elif data == "adm_ban":
-        if user_id not in ADMIN_IDS: return
-        user_states[user_id] = "waiting_ban_user"
+    elif data == "adm_add_ch":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_add_channel"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🚫 آیدی عددی کاربر را برای مسدود/آزاد کردن بفرستید:")
+        bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
+
+    elif data == "adm_remove_ch":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_remove_channel"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🗑 آیدی کانالی که می‌خواهید حذف شود را بفرستید:")
+
+    elif data == "adm_users_mgmt":
+        if user_id not in admins: return
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("🚫 مسدود/آزاد کردن کاربر", callback_data="adm_ban_user"),
+            types.InlineKeyboardButton("✉️ ارسال پیام به کاربر", callback_data="adm_msg_user"),
+            types.InlineKeyboardButton("➕ افزودن ادمین جدید", callback_data="adm_add_admin"),
+            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text("👥 **بخش مدیریت کاربران و ادمین‌ها:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif data == "adm_ban_user":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_ban_input"
+        bot.answer_callback_query(call.id)
+        bot.send_message(message=call.message, text="🚫 آیدی عددی کاربر را برای مسدود/آزاد کردن بفرستید:")
+
+    elif data == "adm_msg_user":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_user_msg_id"
+        bot.answer_callback_query(call.id)
+        bot.send_message(message=call.message, text="✉️ ابتدا آیدی عددی کاربر را بفرستید:")
+
+    elif data == "adm_add_admin":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_new_admin_id"
+        bot.answer_callback_query(call.id)
+        bot.send_message(message=call.message, text="➕ آیدی عددی کاربر جدید را برای ادمین شدن بفرستید:")
+
+    elif data == "adm_buttons_mgmt":
+        if user_id not in admins: return
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="adm_rename_btn"),
+            types.InlineKeyboardButton("🔀 جابجایی ترتیب دکمه‌ها", callback_data="adm_move_btn"),
+            types.InlineKeyboardButton("🔙 بازگشت", callback_data="menu_admin")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text("🎛 **مدیریت دکمه‌های منو:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif data == "adm_rename_btn":
+        if user_id not in admins: return
+        user_states[user_id] = "waiting_rename_choice"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("اینستاگرام", callback_data="rename_insta"),
+            types.InlineKeyboardButton("موزیک", callback_data="rename_music")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text("✏️ کدام دکمه ویرایش شود؟", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif data.startswith("rename_"):
+        if user_id not in admins: return
+        btn_key = data.replace("rename_", "")
+        user_states[user_id] = f"set_name_{btn_key}"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "✍️ نام جدید دکمه را بفرستید:")
+
+    elif data == "adm_move_btn":
+        if user_id not in admins: return
+        order = settings.get("btn_order", ["insta", "music"])
+        user_states[user_id] = "waiting_reorder"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, f"🔀 ترتیب فعلی دکمه‌ها: `{' , '.join(order)}`\n\nترتیب جدید را با فاصله یا کاما بفرستید (کلیدها: `insta`, `music`):")
 
     elif data == "adm_back":
-        if user_id not in ADMIN_IDS: return
+        if user_id not in admins: return
         bot.answer_callback_query(call.id)
-        bot.edit_message_text("📌 **برای شروع، لطفاً گزینه مورد نظر خود را از دکمه‌های زیر انتخاب کنید:**", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
+        bot.edit_message_text("📌 **گزینه مورد نظر خود را انتخاب کنید:**", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_markup(user_id))
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check_sub(call):
     if check_membership(call.from_user.id):
-        bot.answer_callback_query(call.id, "✅ عضویت شما تایید شد!")
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
+        bot.answer_callback_query(call.id, "✅ عضویت تایید شد!")
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
         send_welcome(call.message)
     else:
-        bot.answer_callback_query(call.id, "❌ شما هنوز در کانال عضو نشده‌اید!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
 
-@bot.message_handler(content_types=['photo', 'document', 'text'])
+@bot.message_handler(content_types=['text'])
 def handle_all_requests(message):
     user_id = message.from_user.id
-    if is_banned(user_id):
-        return
+    if is_banned(user_id): return
     save_user(message)
     settings = load_settings()
-    channel = settings.get("channel")
-    if channel and not check_membership(user_id):
-        bot.reply_to(message, "⚠️ لطفا ابتدا در کانال ربات عضو شوید.")
+    channels = settings.get("channels", [])
+    admins = settings.get("admins", INITIAL_ADMINS)
+
+    if channels and not check_membership(user_id):
+        bot.reply_to(message, "⚠️ لطفا ابتدا در کانال‌های ربات عضو شوید.")
         return
 
     current_state = user_states.get(user_id)
     text = message.text.strip() if message.text else ""
 
-    # مدیریت پنل ادمین
-    if user_id in ADMIN_IDS:
-        if current_state == "waiting_broadcast_text":
-            users = load_users()
-            success = 0
-            failed = 0
-            for uid in users.keys():
-                try:
-                    bot.send_message(int(uid), text)
-                    success += 1
-                except:
-                    failed += 1
-            bot.reply_to(message, f"✅ پیام همگانی ارسال شد.\nموفق: {success}\nناموفق: {failed}")
+    # پنل مدیریت ادمین
+    if user_id in admins:
+        if current_state == "waiting_broadcast":
+            for uid in load_users().keys():
+                try: bot.send_message(int(uid), text)
+                except: pass
+            bot.reply_to(message, "✅ پیام همگانی ارسال شد.")
             user_states.pop(user_id, None)
             return
 
-        elif current_state == "waiting_channel_id":
-            if text.lower() == "off":
-                settings["channel"] = ""
+        elif current_state == "waiting_add_channel":
+            ch = text if text.startswith("@") else "@" + text
+            if ch not in settings["channels"]:
+                settings["channels"].append(ch)
                 save_settings(settings)
-                bot.reply_to(message, "✅ قفل کانال غیرفعال شد.")
-            else:
-                if not text.startswith("@"): text = "@" + text
-                settings["channel"] = text
-                save_settings(settings)
-                bot.reply_to(message, f"✅ کانال قفل روی `{text}` تنظیم شد.")
+                bot.reply_to(message, f"✅ کانال {ch} افزوده شد.")
+            else: bot.reply_to(message, "⚠️ کانال از قبل وجود دارد.")
             user_states.pop(user_id, None)
             return
 
-        elif current_state == "waiting_ban_user":
+        elif current_state == "waiting_remove_channel":
+            ch = text if text.startswith("@") else "@" + text
+            if ch in settings["channels"]:
+                settings["channels"].remove(ch)
+                save_settings(settings)
+                bot.reply_to(message, f"🗑 کانال {ch} حذف شد.")
+            else: bot.reply_to(message, "❌ کانال یافت نشد.")
+            user_states.pop(user_id, None)
+            return
+
+        elif current_state == "waiting_ban_input":
             try:
-                target_id = str(int(text))
+                target = str(int(text))
                 users = load_users()
-                if target_id in users:
-                    current_status = users[target_id].get("banned", False)
-                    users[target_id]["banned"] = not current_status
+                if target in users:
+                    users[target]["banned"] = not users[target].get("banned", False)
                     save_json(USERS_FILE, users)
-                    status_str = "مسدود شد 🚫" if users[target_id]["banned"] else "آزاد شد ✅"
-                    bot.reply_to(message, f"کاربر `{target_id}` با موفقیت {status_str}")
-                else:
-                    bot.reply_to(message, "❌ کاربری با این آیدی در دیتابیس یافت نشد.")
-            except:
-                bot.reply_to(message, "❌ آیدی عددی نامعتبر است.")
+                    st = "مسدود 🚫" if users[target]["banned"] else "آزاد ✅"
+                    bot.reply_to(message, f"کاربر {target} {st}")
+                else: bot.reply_to(message, "❌ کاربر یافت نشد.")
+            except: bot.reply_to(message, "❌ آیدی نامعتبر.")
             user_states.pop(user_id, None)
             return
 
-    # بررسی رمز ساخت کاور
-    if current_state == "waiting_cover_password":
-        if text == "negin":
-            cover_auth[user_id] = True
-            user_states[user_id] = "waiting_cover_bg"
-            cover_data[user_id] = {}
-            bot.reply_to(message, "✅ رمز تایید شد!\n\n🖼 لطفاً **تصویر اول (بک‌گراند)** را ارسال کنید:", reply_markup=get_main_menu_markup(user_id))
-        else:
-            bot.reply_to(message, "❌ رمز اشتباه است. دوباره تلاش کنید:", reply_markup=get_main_menu_markup(user_id))
-        return
+        elif current_state == "waiting_user_msg_id":
+            user_states[user_id] = f"send_msg_to_{text}"
+            bot.reply_to(message, "💬 متنی که می‌خواهید به این کاربر ارسال کنید را بفرستید:")
+            return
 
-    # دریافت تصویر اول کاور
-    if current_state == "waiting_cover_bg":
-        file_id = None
-        if message.photo: file_id = message.photo[-1].file_id
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'): file_id = message.document.file_id
-
-        if file_id:
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            bg_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_bg.jpg")
-            with open(bg_path, 'wb') as new_file: new_file.write(downloaded_file)
-            cover_data[user_id]["bg"] = bg_path
-            user_states[user_id] = "waiting_cover_logo"
-            bot.reply_to(message, "✅ تصویر بک‌گراند ذخیره شد.\n\n🖼 حالا **تصویر دوم (لوگوی اسم فیلم PNG)** را بفرستید:")
-        else:
-            bot.reply_to(message, "❌ لطفاً تصویر بک‌گراند را به صورت عکس یا فایل تصویری ارسال کنید.")
-        return
-
-    # دریافت تصویر دوم کاور
-    if current_state == "waiting_cover_logo":
-        file_id = None
-        if message.photo: file_id = message.photo[-1].file_id
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'): file_id = message.document.file_id
-
-        if file_id:
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            logo_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_logo.png")
-            with open(logo_path, 'wb') as new_file: new_file.write(downloaded_file)
-            cover_data[user_id]["logo"] = logo_path
-            user_states[user_id] = "waiting_cover_subtitle"
-            bot.reply_to(message, "✅ لوگو ذخیره شد.\n\n💬 حالا **متن اول (مثل: زیرنویس فارسی بدون سانسور)** را بفرستید:")
-        else:
-            bot.reply_to(message, "❌ لطفاً لوگو را به صورت عکس یا فایل تصویری ارسال کنید.")
-        return
-
-    # ساخت نهایی کاور با اصلاح کامل و بدون خطای متن فارسی
-    if current_state == "waiting_cover_subtitle":
-        if text:
-            subtitle_text = text
-            bg_path = cover_data[user_id].get("bg")
-            logo_path = cover_data[user_id].get("logo")
-            status_msg = bot.reply_to(message, "🎨 در حال ساخت و ترکیب کاور حرفه‌ای...")
-
+        elif current_state and current_state.startswith("send_msg_to_"):
+            target_id = current_state.replace("send_msg_to_", "")
             try:
-                bg = Image.open(bg_path).convert("RGBA")
-                logo = Image.open(logo_path).convert("RGBA")
-
-                base_width = 1280
-                w_percent = (base_width / float(bg.size[0]))
-                h_size = int(float(bg.size[1]) * float(w_percent))
-                bg = bg.resize((base_width, h_size), Image.Resampling.LANCZOS)
-                draw = ImageDraw.Draw(bg)
-
-                font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-                if not os.path.exists(font_path): font_path = "arial.ttf"
-
-                try:
-                    font_netflix = ImageFont.truetype(font_path, 42)
-                    font_sub = ImageFont.truetype(font_path, 34)
-                except:
-                    font_netflix = ImageFont.load_default()
-                    font_sub = ImageFont.load_default()
-
-                final_logo_x = 70
-                final_logo_y = int(bg.size[1] * 0.42)
-                logo_w = int(bg.size[0] * 0.38)
-                logo_h = int(logo.size[1] * (logo_w / logo.size[0]))
-                logo = logo.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
-                bg.paste(logo, (final_logo_x, final_logo_y), logo)
-
-                def draw_fixed_persian_text(draw_obj, xy, text_str, font_obj, text_color):
-                    x, y = xy
-                    # اصلاح هوشمند جهت برای رفع مشکل جدانویسی و برعکس بودن حروف فارسی
-                    reshaped_text = arabic_reshaper.reshape(text_str)
-                    bidi_text = get_display(reshaped_text)
-                    
-                    shadow_color = (0, 0, 0, 255)
-                    for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3), (3, 0)]:
-                        draw_obj.text((x + dx, y + dy), bidi_text, fill=shadow_color, font=font_obj)
-                    draw_obj.text((x, y), bidi_text, fill=text_color, font=font_obj)
-
-                draw.text((final_logo_x, final_logo_y - 50), "NETFLIXSIT1", fill=(0, 220, 220, 255), font=font_netflix)
-
-                text_x = 70
-                text_y = final_logo_y + logo_h + 30
-                
-                draw_fixed_persian_text(draw, (text_x, text_y), subtitle_text, font_sub, (255, 255, 255, 255))
-                draw_fixed_persian_text(draw, (text_x, text_y + 45), "دانلود شده از چنل نتفلیکس سایت", font_sub, (255, 255, 255, 255))
-
-                output_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_output.jpg")
-                bg.convert("RGB").save(output_path, "JPEG", quality=95)
-
-                with open(output_path, 'rb') as photo:
-                    bot.send_photo(message.chat.id, photo, caption="✅ کاور شما با موفقیت ساخته شد!\n🤖 t.me/zeucdl_bot", reply_markup=get_main_menu_markup(user_id))
-                
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            except Exception as e:
-                bot.edit_message_text(f"❌ خطا در ساخت کاور: {str(e)}", message.chat.id, status_msg.message_id)
-
+                bot.send_message(int(target_id), f"📩 پیام از طرف مدیریت:\n\n{text}")
+                bot.reply_to(message, "✅ پیام ارسال شد.")
+            except: bot.reply_to(message, "❌ ارسال پیام ناموفق بود.")
             user_states.pop(user_id, None)
-            cover_data.pop(user_id, None)
-        else:
-            bot.reply_to(message, "❌ لطفاً متن زیرنویس یا دوبله را ارسال کنید.")
-        return
+            return
+
+        elif current_state == "waiting_new_admin_id":
+            try:
+                new_adm = int(text)
+                if new_adm not in settings["admins"]:
+                    settings["admins"].append(new_adm)
+                    save_settings(settings)
+                    bot.reply_to(message, f"✅ ادمین جدید با آیدی {new_adm} افزوده شد.")
+                else: bot.reply_to(message, "⚠️ کاربر از قبل ادمین است.")
+            except: bot.reply_to(message, "❌ آیدی نامعتبر.")
+            user_states.pop(user_id, None)
+            return
+
+        elif current_state and current_state.startswith("set_name_"):
+            btn_key = current_state.replace("set_name_", "")
+            settings["btn_names"][btn_key] = text
+            save_settings(settings)
+            bot.reply_to(message, f"✅ نام دکمه با موفقیت تغییر کرد.")
+            user_states.pop(user_id, None)
+            return
+
+        elif current_state == "waiting_reorder":
+            new_order = [x.strip() for x in text.replace(",", " ").split() if x.strip() in ["insta", "music"]]
+            if len(new_order) == 2:
+                settings["btn_order"] = new_order
+                save_settings(settings)
+                bot.reply_to(message, "✅ ترتیب دکمه‌ها با موفقیت بروز شد.")
+            else: bot.reply_to(message, "❌ کلیدها نامعتبرند. دو کلید `insta`, `music` را وارد کنید.")
+            user_states.pop(user_id, None)
+            return
 
     if not (text.startswith("http://") or text.startswith("https://")):
-        bot.reply_to(message, "❌ لطفا ابتدا یکی از دکمه‌های منو را انتخاب کنید و سپس لینک بفرستید:", reply_markup=get_main_menu_markup(user_id))
+        bot.reply_to(message, "❌ لطفاً ابتدا دکمه‌ای انتخاب کنید و سپس لینک بفرستید:", reply_markup=get_main_menu_markup(user_id))
         return
 
     status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
-    
     try:
         if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s', 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=True)
                 file_path = ydl.prepare_filename(info)
-                if not os.path.exists(file_path):
-                    file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
-                caption_text = info.get('description') or "کپشنی یافت نشد."
+                if not os.path.exists(file_path): file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+                caption = info.get('description') or "بدون کپشن"
 
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as vid:
                     markup = types.InlineKeyboardMarkup()
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
-                    bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n📝 کپشن:\n{caption_text[:800]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                    bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n{caption[:800]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 bot.delete_message(message.chat.id, status_msg.message_id)
-                bot.send_message(message.chat.id, "👇 برای دانلود بیشتر، گزینه مورد نظر را انتخاب کنید:", reply_markup=get_main_menu_markup(user_id))
-            else:
-                bot.edit_message_text("⚠️ فایلی برای این لینک یافت نشد.", message.chat.id, status_msg.message_id)
+                bot.send_message(message.chat.id, "👇 گزینه بعدی:", reply_markup=get_main_menu_markup(user_id))
             user_states.pop(user_id, None)
             return
 
         elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            bot.edit_message_text("🎧 در حال دریافت فایل صوتی...", message.chat.id, status_msg.message_id)
             target_url = text
             if "spotify.com" in text:
                 try:
@@ -452,8 +441,7 @@ def handle_all_requests(message):
                     import re
                     m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                     if m: target_url = f"scsearch:{m.group(1)}"
-                except:
-                    target_url = text
+                except: pass
 
             ydl_opts = {
                 'format': 'bestaudio',
@@ -465,33 +453,24 @@ def handle_all_requests(message):
                 info = ydl.extract_info(target_url, download=True)
                 if 'entries' in info: info = info['entries'][0]
                 file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
-            
+
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as audio:
-                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده با موفقیت\n🤖 t.me/zeucdl_bot")
+                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
                 bot.delete_message(message.chat.id, status_msg.message_id)
-                bot.send_message(message.chat.id, "👇 برای دانلود بیشتر، گزینه مورد نظر را انتخاب کنید:", reply_markup=get_main_menu_markup(user_id))
-            else:
-                bot.edit_message_text("❌ خطا در دانلود فایل صوتی.", message.chat.id, status_msg.message_id)
+                bot.send_message(message.chat.id, "👇 گزینه بعدی:", reply_markup=get_main_menu_markup(user_id))
             user_states.pop(user_id, None)
             return
 
-        else:
-            bot.edit_message_text("❌ لطفا ابتدا یکی از دکمه‌های منو را انتخاب کنید:", message.chat.id, status_msg.message_id, reply_markup=get_main_menu_markup(user_id))
-
     except Exception as e:
-        try:
-            bot.edit_message_text(f"❌ خطا در پردازش درخواست: {str(e)}", message.chat.id, status_msg.message_id)
-        except:
-            pass
-    finally:
-        clear_downloads()
+        try: bot.edit_message_text(f"❌ خطا: {str(e)}", message.chat.id, status_msg.message_id)
+        except: pass
+    finally: clear_downloads()
 
 if __name__ == "__main__":
     web_thread = threading.Thread(target=run_web)
     web_thread.daemon = True
     web_thread.start()
-    
     print("Bot & Web server are running...")
     try: bot.remove_webhook()
     except: pass
