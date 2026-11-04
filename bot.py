@@ -38,10 +38,10 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# سیستم خودپینگ برای جلوگیری از خوابیدن هاست رایگان
+# سیستم خودپینگ برای بیدار نگه داشتن هاست
 def self_ping_worker():
     import urllib.request
-    time.sleep(10)  # کمی صبر برای بالا آمدن کامل سرور
+    time.sleep(10)
     while True:
         try:
             app_url = os.environ.get("RENDER_EXTERNAL_URL")
@@ -49,7 +49,7 @@ def self_ping_worker():
                 urllib.request.urlopen(app_url, timeout=10)
         except Exception as e:
             print(f"Self-ping error: {e}")
-        time.sleep(240)  # هر ۴ دقیقه یک‌بار (پایین‌تر از زمان خواب رندر)
+        time.sleep(240)
 
 def clear_downloads():
     if os.path.exists(DOWNLOAD_DIR):
@@ -193,7 +193,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# سیستم هوشمند خواندن وب بدون نیاز به ادمین بودن در کانال مبدأ
+# سیستم هوشمند خواندن وب و ارسال کانفیگ‌ها به شکل کد قابل کپی با کلیک روی خود پیام
 def fetch_channel_web_updates():
     import re
     import urllib.request
@@ -244,12 +244,11 @@ def fetch_channel_web_updates():
                                         encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
                                         final_cfg = f"{cfg}#{encoded_name}"
                                     
+                                    # قرار دادن کانفیگ داخل بلوک کد (Monospace) برای قابلیت کپی با یک تپ روی خود پیام
                                     msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
-                                    markup = types.InlineKeyboardMarkup()
-                                    markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data=f"copy_cfg"))
                                     
                                     try:
-                                        bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown", reply_markup=markup)
+                                        bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
                                     except Exception as err:
                                         print(f"Error sending to dest: {err}")
                             
@@ -269,10 +268,6 @@ def callback_router(call):
     data = call.data
     settings = load_settings()
     admins = settings.get("admins", INITIAL_ADMINS)
-
-    if data == "copy_cfg":
-        bot.answer_callback_query(call.id, "✅ برای کپی کردن، روی کد بالا ضربه بزنید یا آن را نگه دارید.", show_alert=True)
-        return
 
     if user_id not in admins and data != "check_sub":
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
@@ -617,12 +612,10 @@ def handle_all_requests(message):
             if updated_lines:
                 bot.reply_to(message, f"🚀 در حال ارسال {len(updated_lines)} سرور با نام جدید...", reply_markup=get_reply_keyboard(user_id))
                 for cfg in updated_lines:
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data="copy_cfg"))
                     try:
-                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown", reply_markup=markup)
+                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown")
                     except:
-                        bot.send_message(message.chat.id, cfg, reply_markup=markup)
+                        bot.send_message(message.chat.id, cfg)
                 bot.send_message(message.chat.id, "✅ تمامی سرورها با موفقیت ارسال شدند!", reply_markup=get_reply_keyboard(user_id))
             else:
                 bot.reply_to(message, "❌ هیچ کانفیگ معتبری یافت نشد.", reply_markup=get_reply_keyboard(user_id))
@@ -925,10 +918,10 @@ def run_child_bot(token):
                 status = c_bot.reply_to(msg, "⏳ در حال پردازش و دانلود...")
                 try:
                     ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/child_%(id)s.%(ext)s', 'quiet': True}
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(txt, download=True)
-                        f_path = ydl.prepare_filename(info)
-                        if not os.path.exists(f_path): f_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+                    users_dl = yt_dlp.YoutubeDL(ydl_opts)
+                    info = users_dl.extract_info(txt, download=True)
+                    f_path = users_dl.prepare_filename(info)
+                    if not os.path.exists(f_path): f_path = users_dl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                     if os.path.exists(f_path):
                         with open(f_path, 'rb') as f_vid:
                             c_bot.send_video(msg.chat.id, f_vid, caption="✅ دانلود انجام شد.")
@@ -957,17 +950,14 @@ def init_saved_child_bots():
 if __name__ == "__main__":
     init_saved_child_bots()
     
-    # نخ پایش کانال‌های مبدأ
     fetch_thread = threading.Thread(target=fetch_channel_web_updates)
     fetch_thread.daemon = True
     fetch_thread.start()
 
-    # نخ وب‌سایت Flask
     web_thread = threading.Thread(target=run_web)
     web_thread.daemon = True
     web_thread.start()
 
-    # نخ خودپینگ برای بیدار نگه داشتن هاست
     ping_thread = threading.Thread(target=self_ping_worker)
     ping_thread.daemon = True
     ping_thread.start()
