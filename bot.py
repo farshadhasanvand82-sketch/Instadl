@@ -24,7 +24,6 @@ user_states = {}
 child_bot_instances = {}
 child_bot_threads = {}
 rename_temp_data = {} 
-pro_forward_data = {} # ذخیره موقت اطلاعات کانال‌های مبدأ و مقصد برای بخش حرفه‌ای
 
 app = Flask(__name__)
 
@@ -177,6 +176,48 @@ def send_welcome(message):
         f"سلام! 🤖{mode_text}\nبه ربات پیشرفته دانلود رسانه خوش آمدید.\n\n📌 **گزینه مورد نظر خود را از کیبورد پایین انتخاب کنید:**",
         reply_markup=get_reply_keyboard(user_id)
     )
+
+# پردازش دقیق پست‌های کانال مبدأ (پشتیبانی از channel_post)
+@bot.channel_post_handler(content_types=['text', 'document'])
+def handle_channel_posts(message):
+    settings = load_settings()
+    chat_username = message.chat.username or ""
+    chat_id = str(message.chat.id)
+    
+    source_list = [s.replace('@', '').strip() for s in settings.get("pro_sources", [])]
+    
+    if chat_username in source_list or chat_id in source_list or f"@{chat_username}" in settings.get("pro_sources", []):
+        text_content = message.text or message.caption or ""
+        if message.document:
+            try:
+                file_info = bot.get_file(message.document.file_id)
+                downloaded_file = bot.download_file(file_info.file_path)
+                text_content += "\n" + downloaded_file.decode('utf-8', errors='ignore')
+            except:
+                pass
+
+        if text_content:
+            import re
+            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s]+', text_content)
+            if configs:
+                dest_ch = settings.get("pro_dest")
+                new_name = settings.get("pro_name", "VIP Server")
+                if dest_ch:
+                    import urllib.parse
+                    for idx, cfg in enumerate(configs):
+                        if "#" in cfg:
+                            base_cfg = cfg.rsplit("#", 1)[0]
+                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                            final_cfg = f"{base_cfg}#{encoded_name}"
+                        else:
+                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                            final_cfg = f"{cfg}#{encoded_name}"
+                        
+                        msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
+                        try:
+                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
+                        except Exception as e:
+                            print(f"Error forwarding config to destination channel: {e}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
@@ -436,7 +477,7 @@ def callback_router(call):
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
             types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
-            types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu") # دکمه حرفه‌ای جدید
+            types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu")
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
@@ -450,34 +491,6 @@ def handle_all_requests(message):
     user_id = message.from_user.id
     settings = load_settings()
     admins = settings.get("admins", INITIAL_ADMINS)
-
-    # پایش خودکار پیام‌های ورودی از کانال‌های مبدأ (بخش حرفه‌ای / دریافت اطلاعات)
-    if message.chat.type in ['channel', 'supergroup'] and str(message.chat.username or message.chat.id) in [s.replace('@','') for s in settings.get("pro_sources", [])]:
-        text_content = message.text or message.caption or ""
-        if text_content:
-            import re
-            # پیدا کردن انواع کانفیگ‌های v2ray
-            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s]+', text_content)
-            if configs:
-                dest_ch = settings.get("pro_dest")
-                new_name = settings.get("pro_name", "VIP Server")
-                if dest_ch:
-                    import urllib.parse
-                    for idx, cfg in enumerate(configs):
-                        if "#" in cfg:
-                            base_cfg = cfg.rsplit("#", 1)[0]
-                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
-                            final_cfg = f"{base_cfg}#{encoded_name}"
-                        else:
-                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
-                            final_cfg = f"{cfg}#{encoded_name}"
-                        
-                        msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
-                        try:
-                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
-                        except Exception as e:
-                            print(f"Error forwarding to channel: {e}")
-        return
 
     if is_banned(user_id): return
     save_user(message)
@@ -511,7 +524,7 @@ def handle_all_requests(message):
             sources = [x.strip() for x in text.replace(",", " ").split() if x.strip()]
             settings["pro_sources"] = sources
             save_settings(settings)
-            bot.reply_to(message, f"✅ کانال‌های مبدأ با موفقیت ثبت شدند: {sources}", reply_markup=get_reply_keyboard(user_id))
+            bot.reply_to(message, f"✅ کانال‌های مبدأ ثبت شدند: {sources}", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
@@ -519,7 +532,7 @@ def handle_all_requests(message):
             dest = text if text.startswith("@") else "@" + text
             settings["pro_dest"] = dest
             save_settings(settings)
-            bot.reply_to(message, f"✅ کانال مقصد با موفقیت تنظیم شد: {dest}", reply_markup=get_reply_keyboard(user_id))
+            bot.reply_to(message, f"✅ کانال مقصد ثبت شد: {dest}", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
 
