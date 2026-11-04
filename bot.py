@@ -815,9 +815,9 @@ def handle_all_requests(message):
                 if not os.path.exists(file_path): file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                 caption = info.get('description') or "بدون کپشن"
                 
-                # استخراج اطلاعات موزیک متصل به پست اینستاگرام (در صورت وجود)
+                # استخراج امن نام موزیک از متادیتا
                 track_info = info.get('track') or info.get('song') or info.get('title')
-                if track_info and "instagram" not in track_info.lower():
+                if track_info and isinstance(track_info, str) and "instagram" not in track_info.lower():
                     song_name = track_info
 
             # ارسال ویدیو به کاربر
@@ -827,7 +827,7 @@ def handle_all_requests(message):
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
                     bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 
-                # اگر روی پست موزیک بود، خودکار دنبالش بگرد و بفرست
+                # جستجوی امن موزیک بدون خطای ایندکس
                 if song_name:
                     bot.send_message(message.chat.id, f"🎵 **موزیک روی پست شناسایی شد:** `{song_name}`\n⏳ در حال جستجو و دانلود موزیک...")
                     try:
@@ -837,16 +837,22 @@ def handle_all_requests(message):
                             'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
                             'quiet': True, 'noplaylist': True,
                         }
+                        music_path = None
                         with yt_dlp.YoutubeDL(audio_opts) as music_ydl:
-                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=True)
-                            if 'entries' in music_info: music_info = music_info['entries'][0]
-                            music_path = music_ydl.prepare_filename(music_info).rsplit('.', 1)[0] + '.mp3'
+                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
+                            if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
+                                best_match = music_info['entries'][0]
+                                if best_match and 'webpage_url' in best_match:
+                                    music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
+                                    music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
                         
-                        if os.path.exists(music_path):
+                        if music_path and os.path.exists(music_path):
                             with open(music_path, 'rb') as aud:
                                 bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                        else:
+                            bot.send_message(message.chat.id, "⚠️ موزیک این پست در منابع صوتی یافت نشد.")
                     except Exception as music_err:
-                        bot.send_message(message.chat.id, f"⚠️ موزیک پست پیدا نشد یا خطا رخ داد: {str(music_err)}")
+                        bot.send_message(message.chat.id, f"⚠️ امکان دانلود موزیک این پست وجود ندارد.")
 
                 bot.delete_message(message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
