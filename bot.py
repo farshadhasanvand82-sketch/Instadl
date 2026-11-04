@@ -177,7 +177,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# پردازش دقیق پست‌های کانال مبدأ (پشتیبانی از channel_post)
+# پردازش و ارسال پست‌ها با دکمه شیشه‌ای کپی
 @bot.channel_post_handler(content_types=['text', 'document'])
 def handle_channel_posts(message):
     settings = load_settings()
@@ -214,8 +214,12 @@ def handle_channel_posts(message):
                             final_cfg = f"{cfg}#{encoded_name}"
                         
                         msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
+                        
+                        markup = types.InlineKeyboardMarkup()
+                        markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data=f"copy_cfg"))
+                        
                         try:
-                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
+                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown", reply_markup=markup)
                         except Exception as e:
                             print(f"Error forwarding config to destination channel: {e}")
 
@@ -225,6 +229,10 @@ def callback_router(call):
     data = call.data
     settings = load_settings()
     admins = settings.get("admins", INITIAL_ADMINS)
+
+    if data == "copy_cfg":
+        bot.answer_callback_query(call.id, "✅ برای کپی کردن، روی کد بالا ضربه بزنید یا آن را نگه دارید.", show_alert=True)
+        return
 
     if user_id not in admins and data != "check_sub":
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
@@ -448,7 +456,7 @@ def callback_router(call):
             types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
         )
         bot.answer_callback_query(call.id)
-        bot.edit_message_text(f"⚡️ **بخش مدیریت حرفه‌ای (دریافت اطلاعات):**\n\n📥 مبدأ(ها): `{sources}`\n📤 مقصد: `{dest}`\n🏷 نام جدید سرورها: `{pname}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text(f"⚡️ **بخش مدیریت حرفه‌ای (اطلاعات سرور):**\n\n📥 مبدأ(ها): `{sources}`\n📤 مقصد: `{dest}`\n🏷 نام جدید سرورها: `{pname}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif data == "pro_set_source":
         user_states[user_id] = "waiting_pro_source"
@@ -569,10 +577,12 @@ def handle_all_requests(message):
             if updated_lines:
                 bot.reply_to(message, f"🚀 در حال ارسال {len(updated_lines)} سرور با نام جدید...", reply_markup=get_reply_keyboard(user_id))
                 for cfg in updated_lines:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data="copy_cfg"))
                     try:
-                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown")
+                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown", reply_markup=markup)
                     except:
-                        bot.send_message(message.chat.id, cfg)
+                        bot.send_message(message.chat.id, cfg, reply_markup=markup)
                 bot.send_message(message.chat.id, "✅ تمامی سرورها با موفقیت ارسال شدند!", reply_markup=get_reply_keyboard(user_id))
             else:
                 bot.reply_to(message, "❌ هیچ کانفیگ معتبری یافت نشد.", reply_markup=get_reply_keyboard(user_id))
