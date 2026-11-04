@@ -38,6 +38,19 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
+# سیستم خودپینگ برای جلوگیری از خوابیدن هاست رایگان
+def self_ping_worker():
+    import urllib.request
+    time.sleep(10)  # کمی صبر برای بالا آمدن کامل سرور
+    while True:
+        try:
+            app_url = os.environ.get("RENDER_EXTERNAL_URL")
+            if app_url:
+                urllib.request.urlopen(app_url, timeout=10)
+        except Exception as e:
+            print(f"Self-ping error: {e}")
+        time.sleep(240)  # هر ۴ دقیقه یک‌بار (پایین‌تر از زمان خواب رندر)
+
 def clear_downloads():
     if os.path.exists(DOWNLOAD_DIR):
         shutil.rmtree(DOWNLOAD_DIR)
@@ -944,15 +957,22 @@ def init_saved_child_bots():
 if __name__ == "__main__":
     init_saved_child_bots()
     
+    # نخ پایش کانال‌های مبدأ
     fetch_thread = threading.Thread(target=fetch_channel_web_updates)
     fetch_thread.daemon = True
     fetch_thread.start()
 
+    # نخ وب‌سایت Flask
     web_thread = threading.Thread(target=run_web)
     web_thread.daemon = True
     web_thread.start()
+
+    # نخ خودپینگ برای بیدار نگه داشتن هاست
+    ping_thread = threading.Thread(target=self_ping_worker)
+    ping_thread.daemon = True
+    ping_thread.start()
     
-    print("Bot & Web server are running...")
+    print("Bot & Web server are running with Self-Ping enabled...")
     try: bot.remove_webhook()
     except: pass
     bot.infinity_polling()
