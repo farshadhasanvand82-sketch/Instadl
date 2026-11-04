@@ -244,9 +244,7 @@ def fetch_channel_web_updates():
                                         encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
                                         final_cfg = f"{cfg}#{encoded_name}"
                                     
-                                    # قرار دادن کانفیگ داخل بلوک کد (Monospace) برای قابلیت کپی با یک تپ روی خود پیام
                                     msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
-                                    
                                     try:
                                         bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
                                     except Exception as err:
@@ -805,20 +803,51 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک...")
+    status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک و بررسی موزیک روی پست...")
     try:
         if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s', 'quiet': True}
+            song_name = None
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=True)
                 file_path = ydl.prepare_filename(info)
                 if not os.path.exists(file_path): file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                 caption = info.get('description') or "بدون کپشن"
+                
+                # استخراج اطلاعات موزیک متصل به پست اینستاگرام (در صورت وجود)
+                track_info = info.get('track') or info.get('song') or info.get('title')
+                if track_info and "instagram" not in track_info.lower():
+                    song_name = track_info
+
+            # ارسال ویدیو به کاربر
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as vid:
                     markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری", url=text))
-                    bot.send_video(message.chat.id, vid, caption=f"✅ دانلود انجام شد.\n\n{caption[:800]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
+                    bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                
+                # اگر روی پست موزیک بود، خودکار دنبالش بگرد و بفرست
+                if song_name:
+                    bot.send_message(message.chat.id, f"🎵 **موزیک روی پست شناسایی شد:** `{song_name}`\n⏳ در حال جستجو و دانلود موزیک...")
+                    try:
+                        audio_opts = {
+                            'format': 'bestaudio',
+                            'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
+                            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                            'quiet': True, 'noplaylist': True,
+                        }
+                        with yt_dlp.YoutubeDL(audio_opts) as music_ydl:
+                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=True)
+                            if 'entries' in music_info: music_info = music_info['entries'][0]
+                            music_path = music_ydl.prepare_filename(music_info).rsplit('.', 1)[0] + '.mp3'
+                        
+                        if os.path.exists(music_path):
+                            with open(music_path, 'rb') as aud:
+                                bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                    except Exception as music_err:
+                        bot.send_message(message.chat.id, f"⚠️ موزیک پست پیدا نشد یا خطا رخ داد: {str(music_err)}")
+
                 bot.delete_message(message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
             return
@@ -918,10 +947,10 @@ def run_child_bot(token):
                 status = c_bot.reply_to(msg, "⏳ در حال پردازش و دانلود...")
                 try:
                     ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/child_%(id)s.%(ext)s', 'quiet': True}
-                    users_dl = yt_dlp.YoutubeDL(ydl_opts)
-                    info = users_dl.extract_info(txt, download=True)
-                    f_path = users_dl.prepare_filename(info)
-                    if not os.path.exists(f_path): f_path = users_dl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(txt, download=True)
+                        f_path = ydl.prepare_filename(info)
+                        if not os.path.exists(f_path): f_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                     if os.path.exists(f_path):
                         with open(f_path, 'rb') as f_vid:
                             c_bot.send_video(msg.chat.id, f_vid, caption="✅ دانلود انجام شد.")
