@@ -13,9 +13,11 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
-USERS_FILE = "users_data.json"
-SETTINGS_FILE = "settings.json"
-BOTS_FILE = "child_bots.json"
+# استفاده از پوشه دیسک پایدار در صورت وجود برای حفظ اطلاعات پس از آپدیت
+DATA_DIR = "/data" if os.path.exists("/data") else "."
+USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
@@ -177,7 +179,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# پردازش و ارسال پست‌ها با دکمه شیشه‌ای کپی
+# پایش پیشرفته و قدرتمند پست‌های کانال مبدأ (پشتیبانی کامل از متن و باکس‌های کد)
 @bot.channel_post_handler(content_types=['text', 'document'])
 def handle_channel_posts(message):
     settings = load_settings()
@@ -198,13 +200,16 @@ def handle_channel_posts(message):
 
         if text_content:
             import re
-            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s]+', text_content)
+            # استخراج دقیق پروتکل‌های v2ray حتی اگر در خطوط مختلف یا باکس کد باشند
+            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s<>]+', text_content)
             if configs:
                 dest_ch = settings.get("pro_dest")
                 new_name = settings.get("pro_name", "VIP Server")
                 if dest_ch:
                     import urllib.parse
                     for idx, cfg in enumerate(configs):
+                        # پاکسازی کاراکترهای اضافی احتمالی انتهای لینک
+                        cfg = cfg.rstrip('`"\'.,;:)]}>')
                         if "#" in cfg:
                             base_cfg = cfg.rsplit("#", 1)[0]
                             encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
@@ -213,6 +218,7 @@ def handle_channel_posts(message):
                             encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
                             final_cfg = f"{cfg}#{encoded_name}"
                         
+                        # قالب‌بندی صحیح: باکس کد بالا و آیدی کانال مقصد در انتهای پیام
                         msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
                         
                         markup = types.InlineKeyboardMarkup()
