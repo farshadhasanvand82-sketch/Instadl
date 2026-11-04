@@ -9,6 +9,7 @@ import telebot
 import yt_dlp
 from flask import Flask
 from telebot import types
+from shazamio import Shazam
 
 BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
@@ -803,55 +804,85 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    status_msg = bot.reply_to(message, "⏳ در حال پردازش لینک و بررسی موزیک روی پست...")
+    status_msg = bot.reply_to(message, "⏳ در حال دانلود ویدیو و اسکن هوشمند صدا با Shazam...")
     try:
         if current_state == "waiting_insta" or "instagram.com" in text:
-            ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s', 'quiet': True}
-            song_name = None
+            ydl_opts = {
+                'format': 'best',
+                'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
+                'quiet': True,
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
+            }
             
+            video_file_path = None
+            audio_file_path = None
+            song_name = None
+            caption = "بدون کپشن"
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(text, download=True)
-                file_path = ydl.prepare_filename(info)
-                if not os.path.exists(file_path): file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+                base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
+                video_file_path = base_path + '.mp4'
+                audio_file_path = base_path + '.mp3'
                 caption = info.get('description') or "بدون کپشن"
-                
-                track_info = info.get('track') or info.get('song') or info.get('title')
-                if track_info and isinstance(track_info, str):
-                    clean_tr = track_info.strip().lower()
-                    if not clean_tr.startswith("video by") and not clean_tr.startswith("by ") and len(clean_tr) > 2:
-                        song_name = track_info
 
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as vid:
+            # ارسال ویدیو به کاربر
+            if video_file_path and os.path.exists(video_file_path):
+                with open(video_file_path, 'rb') as vid:
                     markup = types.InlineKeyboardMarkup()
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
                     bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
-                
-                if song_name:
-                    bot.send_message(message.chat.id, f"🎵 **موزیک روی پست شناسایی شد:** `{song_name}`\n⏳ در حال جستجو و دانلود موزیک...")
+
+                # اسکن هوشمند صوت با Shazam برای تشخیص دقیق موزیک روی ویدیو
+                if audio_file_path and os.path.exists(audio_file_path):
+                    bot.send_message(message.chat.id, "🎵 در حال آنالیز فرکانس صوتی و جستجوی موزیک...")
                     try:
-                        audio_opts = {
-                            'format': 'bestaudio',
-                            'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
-                            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                            'quiet': True, 'noplaylist': True,
-                        }
-                        music_path = None
-                        with yt_dlp.YoutubeDL(audio_opts) as music_ydl:
-                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
-                            if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
-                                best_match = music_info['entries'][0]
-                                if best_match and 'webpage_url' in best_match:
-                                    music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
-                                    music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
+                        import asyncio
+                        async def recognize_audio():
+                            shazam = Shazam()
+                            out = await shazam.recognize(audio_file_path)
+                            return out
                         
-                        if music_path and os.path.exists(music_path):
-                            with open(music_path, 'rb') as aud:
-                                bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        shazam_res = loop.run_until_complete(recognize_audio())
+                        loop.close()
+
+                        if shazam_res and 'track' in shazam_res:
+                            track = shazam_res['track']
+                            song_title = track.get('title')
+                            artist_name = track.get('subtitle')
+                            song_name = f"{artist_name} - {song_title}"
+
+                        if song_name:
+                            bot.send_message(message.chat.id, f"🎵 **موزیک شناسایی شده توسط Shazam:** `{song_name}`\n⏳ در حال دانلود و ارسال موزیک...")
+                            
+                            # جستجو و دانلود فایل صوتی از ساندکلود/یوتیوب
+                            audio_dl_opts = {
+                                'format': 'bestaudio',
+                                'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
+                                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                                'quiet': True, 'noplaylist': True,
+                            }
+                            final_music_path = None
+                            with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
+                                music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
+                                if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
+                                    best_match = music_info['entries'][0]
+                                    if best_match and 'webpage_url' in best_match:
+                                        music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
+                                        final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
+                            
+                            if final_music_path and os.path.exists(final_music_path):
+                                with open(final_music_path, 'rb') as aud:
+                                    bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                            else:
+                                bot.send_message(message.chat.id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن یافت نشد.")
                         else:
-                            bot.send_message(message.chat.id, "⚠️ موزیک این پست در منابع صوتی یافت نشد.")
-                    except Exception as music_err:
-                        bot.send_message(message.chat.id, f"⚠️ امکان دانلود موزیک این پست وجود ندارد.")
+                            bot.send_message(message.chat.id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد یا صدا مبهم بود.")
+                    except Exception as shazam_err:
+                        print(f"Shazam recognition error: {shazam_err}")
+                        bot.send_message(message.chat.id, "⚠️ خطا در آنالیز صوتی پست.")
 
                 bot.delete_message(message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
