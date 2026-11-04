@@ -1,6 +1,7 @@
 import os
 import shutil
 import threading
+import time
 import json
 import random
 import base64
@@ -13,11 +14,12 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
-# استفاده از پوشه دیسک پایدار در صورت وجود برای حفظ اطلاعات پس از آپدیت
+# استفاده از پوشه دیسک پایدار برای حفظ اطلاعات پس از هر آپدیت
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
+PRO_STATE_FILE = os.path.join(DATA_DIR, "pro_state.json")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
@@ -179,55 +181,79 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# پایش پیشرفته و قدرتمند پست‌های کانال مبدأ (پشتیبانی کامل از متن و باکس‌های کد)
-@bot.channel_post_handler(content_types=['text', 'document'])
-def handle_channel_posts(message):
-    settings = load_settings()
-    chat_username = message.chat.username or ""
-    chat_id = str(message.chat.id)
+# سیستم هوشمند خواندن وب (بدون نیاز به ادمین بودن در کانال مبدأ)
+def fetch_channel_web_updates():
+    import re
+    processed_posts = load_json(PRO_STATE_FILE, {})
     
-    source_list = [s.replace('@', '').strip() for s in settings.get("pro_sources", [])]
-    
-    if chat_username in source_list or chat_id in source_list or f"@{chat_username}" in settings.get("pro_sources", []):
-        text_content = message.text or message.caption or ""
-        if message.document:
-            try:
-                file_info = bot.get_file(message.document.file_id)
-                downloaded_file = bot.download_file(file_info.file_path)
-                text_content += "\n" + downloaded_file.decode('utf-8', errors='ignore')
-            except:
-                pass
+    while True:
+        try:
+            settings = load_settings()
+            sources = settings.get("pro_sources", [])
+            dest_ch = settings.get("pro_dest")
+            new_name = settings.get("pro_name", "VIP Server")
 
-        if text_content:
-            import re
-            # استخراج دقیق پروتکل‌های v2ray حتی اگر در خطوط مختلف یا باکس کد باشند
-            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s<>]+', text_content)
-            if configs:
-                dest_ch = settings.get("pro_dest")
-                new_name = settings.get("pro_name", "VIP Server")
-                if dest_ch:
-                    import urllib.parse
-                    for idx, cfg in enumerate(configs):
-                        # پاکسازی کاراکترهای اضافی احتمالی انتهای لینک
-                        cfg = cfg.rstrip('`"\'.,;:)]}>')
-                        if "#" in cfg:
-                            base_cfg = cfg.rsplit("#", 1)[0]
-                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
-                            final_cfg = f"{base_cfg}#{encoded_name}"
-                        else:
-                            encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
-                            final_cfg = f"{cfg}#{encoded_name}"
+            if sources and dest_ch:
+                for src in sources:
+                    clean_src = src.replace("@", "").strip()
+                    if not clean_src: continue
+                    
+                    url = f"https://t.me/s/{clean_src}"
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    try:
+                        html = urllib.request.urlopen(req, timeout=10).read().decode('utf-8')
+                    except Exception as e:
+                        continue
+                    
+                    # استخراج پست‌های کانال از طریق نسخه وب تلگرام
+                    posts = re.findall(r'<div class="tgme_widget_message_text[^>]*>(.*?)</div>', html, re.DOTALL)
+                    for post_html in posts:
+                        # حذف تگ‌های HTML اضافی
+                        clean_text = re.sub(r'<[^>]+>', '\n', post_html)
+                        import html as html_parser
+                        clean_text = html_parser.unescape(clean_text)
                         
-                        # قالب‌بندی صحیح: باکس کد بالا و آیدی کانال مقصد در انتهای پیام
-                        msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
+                        # شناسه یکتا برای جلوگیری از ارسال تکراری پست‌ها
+                        post_id = str(hash(clean_text))
                         
-                        markup = types.InlineKeyboardMarkup()
-                        markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data=f"copy_cfg"))
-                        
-                        try:
-                            bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown", reply_markup=markup)
-                        except Exception as e:
-                            print(f"Error forwarding config to destination channel: {e}")
+                        if clean_src not in processed_posts:
+                            processed_posts[clean_src] = []
+                            
+                        if post_id not in processed_posts[clean_src]:
+                            # استخراج کانفیگ‌های v2ray
+                            configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s<>]+', clean_text)
+                            if configs:
+                                import urllib.parse
+                                for idx, cfg in enumerate(configs):
+                                    cfg = cfg.rstrip('`"\'.,;:)]}>')
+                                    if "#" in cfg:
+                                        base_cfg = cfg.rsplit("#", 1)[0]
+                                        encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                                        final_cfg = f"{base_cfg}#{encoded_name}"
+                                    else:
+                                        encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
+                                        final_cfg = f"{cfg}#{encoded_name}"
+                                    
+                                    msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
+                                    markup = types.InlineKeyboardMarkup()
+                                    markup.add(types.InlineKeyboardButton("📋 کپی کردن کد", callback_data=f"copy_cfg"))
+                                    
+                                    try:
+                                        bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown", reply_markup=markup)
+                                    except Exception as err:
+                                        print(f"Error sending to dest: {err}")
+                            
+                            # ثبت پست به عنوان بررسی‌شده
+                            processed_posts[clean_src].append(post_id)
+                            if len(processed_posts[clean_src]) > 100:
+                                processed_posts[clean_src].pop(0)
+                                
+                    save_json(PRO_STATE_FILE, processed_posts)
+        except Exception as e:
+            print(f"Background fetch error: {e}")
+        
+        # بررسی هر ۶۰ ثانیه یک‌بار
+        time.sleep(60)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
@@ -922,9 +948,16 @@ def init_saved_child_bots():
 
 if __name__ == "__main__":
     init_saved_child_bots()
+    
+    # راه‌اندازی نخ پس‌زمینه برای بررسی کانال‌های مبدأ بدون نیاز به ادمین بودن
+    fetch_thread = threading.Thread(target=fetch_channel_web_updates)
+    fetch_thread.daemon = True
+    fetch_thread.start()
+
     web_thread = threading.Thread(target=run_web)
     web_thread.daemon = True
     web_thread.start()
+    
     print("Bot & Web server are running...")
     try: bot.remove_webhook()
     except: pass
