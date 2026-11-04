@@ -10,7 +10,7 @@ import yt_dlp
 from flask import Flask
 from telebot import types
 
-BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
+BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
 # استفاده از پوشه دیسک پایدار (/data) برای جلوگیری از پاک شدن اطلاعات پس از آپدیت
