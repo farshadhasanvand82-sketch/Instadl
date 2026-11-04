@@ -485,7 +485,7 @@ def callback_router(call):
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
             types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
-            types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu")
+            types.InlineKeyboardButton("⚡️ اطلاعات سرور", callback_data="adm_pro_menu")
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
@@ -601,7 +601,7 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
                 types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
-                types.InlineKeyboardButton("⚡️ حرفه‌ای", callback_data="adm_pro_menu"),
+                types.InlineKeyboardButton("⚡️ اطلاعات سرور", callback_data="adm_pro_menu"),
                 types.InlineKeyboardButton("🕵️‍♂️ ورود به حالت تست مهمان", callback_data="dummy_guest")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
