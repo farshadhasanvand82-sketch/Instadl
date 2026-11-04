@@ -5,7 +5,6 @@ import time
 import json
 import random
 import base64
-import urllib.request
 import telebot
 import yt_dlp
 from flask import Flask
@@ -14,7 +13,7 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAEfaBcEn-PczAIAELBlliohnHKIpINPNGA"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
-# استفاده از پوشه دیسک پایدار برای حفظ اطلاعات پس از هر آپدیت
+# استفاده از پوشه دیسک پایدار (/data) برای جلوگیری از پاک شدن اطلاعات پس از آپدیت
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -181,9 +180,13 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# سیستم هوشمند خواندن وب (بدون نیاز به ادمین بودن در کانال مبدأ)
+# سیستم هوشمند خواندن وب بدون نیاز به ادمین بودن در کانال مبدأ
 def fetch_channel_web_updates():
     import re
+    import urllib.request
+    import urllib.parse
+    import html as html_parser
+
     processed_posts = load_json(PRO_STATE_FILE, {})
     
     while True:
@@ -205,25 +208,19 @@ def fetch_channel_web_updates():
                     except Exception as e:
                         continue
                     
-                    # استخراج پست‌های کانال از طریق نسخه وب تلگرام
                     posts = re.findall(r'<div class="tgme_widget_message_text[^>]*>(.*?)</div>', html, re.DOTALL)
                     for post_html in posts:
-                        # حذف تگ‌های HTML اضافی
                         clean_text = re.sub(r'<[^>]+>', '\n', post_html)
-                        import html as html_parser
                         clean_text = html_parser.unescape(clean_text)
                         
-                        # شناسه یکتا برای جلوگیری از ارسال تکراری پست‌ها
                         post_id = str(hash(clean_text))
                         
                         if clean_src not in processed_posts:
                             processed_posts[clean_src] = []
                             
                         if post_id not in processed_posts[clean_src]:
-                            # استخراج کانفیگ‌های v2ray
                             configs = re.findall(r'(?:vmess|vless|trojan|ss|ssr)://[^\s<>]+', clean_text)
                             if configs:
-                                import urllib.parse
                                 for idx, cfg in enumerate(configs):
                                     cfg = cfg.rstrip('`"\'.,;:)]}>')
                                     if "#" in cfg:
@@ -243,7 +240,6 @@ def fetch_channel_web_updates():
                                     except Exception as err:
                                         print(f"Error sending to dest: {err}")
                             
-                            # ثبت پست به عنوان بررسی‌شده
                             processed_posts[clean_src].append(post_id)
                             if len(processed_posts[clean_src]) > 100:
                                 processed_posts[clean_src].pop(0)
@@ -252,7 +248,6 @@ def fetch_channel_web_updates():
         except Exception as e:
             print(f"Background fetch error: {e}")
         
-        # بررسی هر ۶۰ ثانیه یک‌بار
         time.sleep(60)
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -949,7 +944,6 @@ def init_saved_child_bots():
 if __name__ == "__main__":
     init_saved_child_bots()
     
-    # راه‌اندازی نخ پس‌زمینه برای بررسی کانال‌های مبدأ بدون نیاز به ادمین بودن
     fetch_thread = threading.Thread(target=fetch_channel_web_updates)
     fetch_thread.daemon = True
     fetch_thread.start()
