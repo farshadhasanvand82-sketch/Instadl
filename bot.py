@@ -729,7 +729,7 @@ def handle_all_requests(message):
             if len(new_order) > 0:
                 settings["btn_order"] = new_order
                 save_settings(settings)
-                bot.reply_to(message, "✅ ترتیب دکمه‌ها بروز شد.", reply_markup=get_reply_keyboard(user_id))
+                bot.reply_to(message, f"✅ ترتیب دکمه‌ها بروز شد.", reply_markup=get_reply_keyboard(user_id))
             else: bot.reply_to(message, "❌ کلیدها نامعتبرند.", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
@@ -815,10 +815,13 @@ def handle_all_requests(message):
                 if not os.path.exists(file_path): file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                 caption = info.get('description') or "بدون کپشن"
                 
-                # استخراج امن نام موزیک از متادیتا
+                # بررسی هوشمند متادیتا برای فیلتر کردن آیدی‌های اینستاگرام
                 track_info = info.get('track') or info.get('song') or info.get('title')
-                if track_info and isinstance(track_info, str) and "instagram" not in track_info.lower():
-                    song_name = track_info
+                if track_info and isinstance(track_info, str):
+                    clean_tr = track_info.strip().lower()
+                    # اگر نام آهنگ شبیه به آیدی اینستاگرام نبود و کلمات کلیدی نداشت، آن را قبول کن
+                    if not clean_tr.startswith("video by") and not clean_tr.startswith("by ") and len(clean_tr) > 2:
+                        song_name = track_info
 
             # ارسال ویدیو به کاربر
             if os.path.exists(file_path):
@@ -827,7 +830,7 @@ def handle_all_requests(message):
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
                     bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 
-                # جستجوی امن موزیک بدون خطای ایندکس
+                # جستجوی موزیک فقط در صورتی که نام معتبری استخراج شده باشد
                 if song_name:
                     bot.send_message(message.chat.id, f"🎵 **موزیک روی پست شناسایی شد:** `{song_name}`\n⏳ در حال جستجو و دانلود موزیک...")
                     try:
@@ -986,7 +989,7 @@ if __name__ == "__main__":
     init_saved_child_bots()
     
     fetch_thread = threading.Thread(target=fetch_channel_web_updates)
-    fetch_thread.daemon = True
+    fetch_thread.daemon =`True`
     fetch_thread.start()
 
     web_thread = threading.Thread(target=run_web)
