@@ -1,6 +1,4 @@
 pyTelegramBotAPI
 yt-dlp
 flask
-Pillow
-arabic-reshaper
-python-bidi
+shazamio
