@@ -14,7 +14,6 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
-# استفاده از پوشه دیسک پایدار (/data) برای جلوگیری از پاک شدن اطلاعات پس از آپدیت
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -39,7 +38,6 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# سیستم خودپینگ برای بیدار نگه داشتن هاست
 def self_ping_worker():
     import urllib.request
     time.sleep(10)
@@ -499,7 +497,7 @@ def callback_router(call):
     elif data == "pro_set_dest":
         user_states[user_id] = "waiting_pro_dest"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید (مثل `@mychannel`):")
+        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید مثل `@mychannel`:")
 
     elif data == "pro_set_name":
         user_states[user_id] = "waiting_pro_name"
@@ -803,9 +801,10 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    status_msg = bot.reply_to(message, "⏳ در حال دانلود و تشخیص سریع موزیک ویدیو...")
-    try:
-        if current_state == "waiting_insta" or "instagram.com" in text:
+    # تابع پس‌زمینه برای پردازش کامل بدون معطلی ربات
+    def process_instagram_link(chat_id, url, user_st_key):
+        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود و پردازش ویدیو...")
+        try:
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
@@ -819,43 +818,38 @@ def handle_all_requests(message):
             caption = "بدون کپشن"
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(text, download=True)
+                info = ydl.extract_info(url, download=True)
                 base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
                 video_file_path = base_path + '.mp4'
                 audio_file_path = base_path + '.mp3'
                 caption = info.get('description') or "بدون کپشن"
 
-            # ارسال ویدیو به کاربر
             if video_file_path and os.path.exists(video_file_path):
                 with open(video_file_path, 'rb') as vid:
                     markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
-                    bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url))
+                    bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
-                # تشخیص سریع صوت از طریق API رایگان تشخیص موزیک
+                # تلاش برای تشخیص موزیک با سرویس صوتی
                 if audio_file_path and os.path.exists(audio_file_path):
-                    bot.send_message(message.chat.id, "🎵 در حال جستجوی موزیک در پایگاه داده صوتی...")
                     try:
                         with open(audio_file_path, 'rb') as f_audio:
-                            # ارسال نمونه کوتاه صوتی به سرویس تشخیص سریع
                             files = {'file': f_audio.read()}
-                            res = requests.post('https://api.audd.io/', data={'api_token': 'test', 'return': 'apple_music,spotify'}, files=files, timeout=15)
+                            res = requests.post('https://api.audd.io/', data={'api_token': 'test', 'return': 'apple_music,spotify'}, files=files, timeout=10)
                             res_json = res.json()
                             if res_json.get('status') == 'success' and res_json.get('result'):
                                 track = res_json['result']
                                 song_name = f"{track.get('artist')} - {track.get('title')}"
-                    except Exception as audd_err:
-                        print(f"Audio recognition api error: {audd_err}")
+                    except:
+                        pass
 
-                    # اگر از طریق صوت پیدا نشد، از نام ترک در متادیتا استفاده کن
                     if not song_name and 'info' in locals():
                         t_info = info.get('track') or info.get('song') or info.get('title')
                         if t_info and isinstance(t_info, str) and not t_info.lower().startswith("video by"):
                             song_name = t_info
 
                     if song_name:
-                        bot.send_message(message.chat.id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
-                        
+                        bot.send_message(chat_id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
                         audio_dl_opts = {
                             'format': 'bestaudio',
                             'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
@@ -873,47 +867,49 @@ def handle_all_requests(message):
                         
                         if final_music_path and os.path.exists(final_music_path):
                             with open(final_music_path, 'rb') as aud:
-                                bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                                bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
                         else:
-                            bot.send_message(message.chat.id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن در منابع یافت نشد.")
+                            bot.send_message(chat_id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن یافت نشد.")
                     else:
-                        bot.send_message(message.chat.id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد.")
+                        bot.send_message(chat_id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد.")
 
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            user_states.pop(user_id, None)
-            return
+                bot.delete_message(chat_id, status_msg.message_id)
+        except Exception as e:
+            try: bot.edit_message_text(f"❌ خطا در پردازش: {str(e)}", chat_id, status_msg.message_id)
+            except: pass
+        finally:
+            user_states.pop(user_st_key, None)
+            clear_downloads()
 
-        elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
-            target_url = text
-            if "spotify.com" in text:
-                try:
-                    req = urllib.request.Request(text, headers={'User-Agent': 'Mozilla/5.0'})
-                    html = urllib.request.urlopen(req).read().decode('utf-8')
-                    import re
-                    m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
-                    if m: target_url = f"scsearch:{m.group(1)}"
-                except: pass
-            ydl_opts = {
-                'format': 'bestaudio',
-                'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'quiet': True, 'noplaylist': True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = yt_dlp.YoutubeDL(ydl_opts).extract_info(target_url, download=True)
-                if 'entries' in info: info = info['entries'][0]
-                file_path = yt_dlp.YoutubeDL(ydl_opts).prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as audio:
-                    bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            user_states.pop(user_id, None)
-            return
+    if current_state == "waiting_insta" or "instagram.com" in text:
+        threading.Thread(target=process_instagram_link, args=(message.chat.id, text, user_id)).start()
+        return
 
-    except Exception as e:
-        try: bot.edit_message_text(f"❌ خطا: {str(e)}", message.chat.id, status_msg.message_id)
-        except: pass
-    finally: clear_downloads()
+    elif current_state == "waiting_music" or "spotify.com" in text or "soundcloud.com" in text:
+        target_url = text
+        if "spotify.com" in text:
+            try:
+                req = urllib.request.Request(text, headers={'User-Agent': 'Mozilla/5.0'})
+                html = urllib.request.urlopen(req).read().decode('utf-8')
+                import re
+                m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+                if m: target_url = f"scsearch:{m.group(1)}"
+            except: pass
+        ydl_opts = {
+            'format': 'bestaudio',
+            'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'quiet': True, 'noplaylist': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = yt_dlp.YoutubeDL(ydl_opts).extract_info(target_url, download=True)
+            if 'entries' in info: info = info['entries'][0]
+            file_path = yt_dlp.YoutubeDL(ydl_opts).prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as audio:
+                bot.send_audio(message.chat.id, audio, caption="🎵 موزیک دانلود شده\n🤖 t.me/zeucdl_bot")
+        user_states.pop(user_id, None)
+        return
 
 def run_child_bot(token):
     try:
