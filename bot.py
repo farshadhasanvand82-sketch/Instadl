@@ -207,6 +207,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
+# قابلیت پرو: دریافت و انتقال خودکار اطلاعات سرور و کانفیگ‌ها از منابع
 def fetch_channel_web_updates():
     import urllib.request
     import urllib.parse
@@ -347,7 +348,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # شناسایی موزیک بر اساس آخرین لینک ارسالی همان کاربر با نمایش درصد پیشرفت
+    # شناسایی موزیک بر اساس آخرین لینک ارسالی کاربر با نمایش صد درصدی درصدها
     if data.startswith("find_music_"):
         user_last_urls = load_json(USER_LAST_URL_FILE, {})
         target_url = user_last_urls.get(str(user_id))
@@ -446,7 +447,7 @@ def callback_router(call):
                 if current_time - last_update_time[0] > 1.5:
                     last_update_time[0] = current_time
                     try:
-                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", chat_id, status_msg.message_id)
                     except:
                         pass
 
@@ -886,7 +887,7 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در جستجوی موزیک
+    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در شناسایی موسیقی
     user_last_urls = load_json(USER_LAST_URL_FILE, {})
     user_last_urls[str(user_id)] = text
     save_json(USER_LAST_URL_FILE, user_last_urls)
