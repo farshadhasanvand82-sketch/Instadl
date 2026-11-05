@@ -7,9 +7,9 @@ import random
 import base64
 import telebot
 import yt_dlp
+import requests
 from flask import Flask
 from telebot import types
-from shazamio import Shazam
 
 BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
@@ -194,7 +194,6 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# سیستم هوشمند خواندن وب و ارسال کانفیگ‌ها به شکل کد قابل کپی با کلیک روی خود پیام
 def fetch_channel_web_updates():
     import re
     import urllib.request
@@ -804,14 +803,14 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    status_msg = bot.reply_to(message, "⏳ در حال دانلود ویدیو و اسکن هوشمند صدا با Shazam...")
+    status_msg = bot.reply_to(message, "⏳ در حال دانلود و تشخیص سریع موزیک ویدیو...")
     try:
         if current_state == "waiting_insta" or "instagram.com" in text:
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
                 'quiet': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}]
             }
             
             video_file_path = None
@@ -833,56 +832,52 @@ def handle_all_requests(message):
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=text))
                     bot.send_video(message.chat.id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
-                # اسکن هوشمند صوت با Shazam برای تشخیص دقیق موزیک روی ویدیو
+                # تشخیص سریع صوت از طریق API رایگان تشخیص موزیک
                 if audio_file_path and os.path.exists(audio_file_path):
-                    bot.send_message(message.chat.id, "🎵 در حال آنالیز فرکانس صوتی و جستجوی موزیک...")
+                    bot.send_message(message.chat.id, "🎵 در حال جستجوی موزیک در پایگاه داده صوتی...")
                     try:
-                        import asyncio
-                        async def recognize_audio():
-                            shazam = Shazam()
-                            out = await shazam.recognize(audio_file_path)
-                            return out
+                        with open(audio_file_path, 'rb') as f_audio:
+                            # ارسال نمونه کوتاه صوتی به سرویس تشخیص سریع
+                            files = {'file': f_audio.read()}
+                            res = requests.post('https://api.audd.io/', data={'api_token': 'test', 'return': 'apple_music,spotify'}, files=files, timeout=15)
+                            res_json = res.json()
+                            if res_json.get('status') == 'success' and res_json.get('result'):
+                                track = res_json['result']
+                                song_name = f"{track.get('artist')} - {track.get('title')}"
+                    except Exception as audd_err:
+                        print(f"Audio recognition api error: {audd_err}")
+
+                    # اگر از طریق صوت پیدا نشد، از نام ترک در متادیتا استفاده کن
+                    if not song_name and 'info' in locals():
+                        t_info = info.get('track') or info.get('song') or info.get('title')
+                        if t_info and isinstance(t_info, str) and not t_info.lower().startswith("video by"):
+                            song_name = t_info
+
+                    if song_name:
+                        bot.send_message(message.chat.id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
                         
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        shazam_res = loop.run_until_complete(recognize_audio())
-                        loop.close()
-
-                        if shazam_res and 'track' in shazam_res:
-                            track = shazam_res['track']
-                            song_title = track.get('title')
-                            artist_name = track.get('subtitle')
-                            song_name = f"{artist_name} - {song_title}"
-
-                        if song_name:
-                            bot.send_message(message.chat.id, f"🎵 **موزیک شناسایی شده توسط Shazam:** `{song_name}`\n⏳ در حال دانلود و ارسال موزیک...")
-                            
-                            # جستجو و دانلود فایل صوتی از ساندکلود/یوتیوب
-                            audio_dl_opts = {
-                                'format': 'bestaudio',
-                                'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
-                                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                                'quiet': True, 'noplaylist': True,
-                            }
-                            final_music_path = None
-                            with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
-                                music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
-                                if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
-                                    best_match = music_info['entries'][0]
-                                    if best_match and 'webpage_url' in best_match:
-                                        music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
-                                        final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
-                            
-                            if final_music_path and os.path.exists(final_music_path):
-                                with open(final_music_path, 'rb') as aud:
-                                    bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
-                            else:
-                                bot.send_message(message.chat.id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن یافت نشد.")
+                        audio_dl_opts = {
+                            'format': 'bestaudio',
+                            'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
+                            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                            'quiet': True, 'noplaylist': True,
+                        }
+                        final_music_path = None
+                        with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
+                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
+                            if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
+                                best_match = music_info['entries'][0]
+                                if best_match and 'webpage_url' in best_match:
+                                    music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
+                                    final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
+                        
+                        if final_music_path and os.path.exists(final_music_path):
+                            with open(final_music_path, 'rb') as aud:
+                                bot.send_audio(message.chat.id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
                         else:
-                            bot.send_message(message.chat.id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد یا صدا مبهم بود.")
-                    except Exception as shazam_err:
-                        print(f"Shazam recognition error: {shazam_err}")
-                        bot.send_message(message.chat.id, "⚠️ خطا در آنالیز صوتی پست.")
+                            bot.send_message(message.chat.id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن در منابع یافت نشد.")
+                    else:
+                        bot.send_message(message.chat.id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد.")
 
                 bot.delete_message(message.chat.id, status_msg.message_id)
             user_states.pop(user_id, None)
