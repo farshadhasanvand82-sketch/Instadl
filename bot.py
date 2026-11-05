@@ -21,6 +21,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
 PRO_STATE_FILE = os.path.join(DATA_DIR, "pro_state.json")
+POSTS_CACHE_FILE = os.path.join(DATA_DIR, "posts_cache.json")
 USER_LAST_URL_FILE = os.path.join(DATA_DIR, "user_last_url.json")
 MUSIC_CHOICES_FILE = os.path.join(DATA_DIR, "music_choices.json")
 
@@ -346,7 +347,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # شناسایی موزیک بر اساس آخرین لینک ارسالی همان کاربر با نمایش کامل درصدها
+    # شناسایی موزیک بر اساس آخرین لینک ارسالی همان کاربر با نمایش درصد پیشرفت
     if data.startswith("find_music_"):
         user_last_urls = load_json(USER_LAST_URL_FILE, {})
         target_url = user_last_urls.get(str(user_id))
@@ -445,7 +446,7 @@ def callback_router(call):
                 if current_time - last_update_time[0] > 1.5:
                     last_update_time[0] = current_time
                     try:
-                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", chat_id, status_msg.message_id)
+                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
                     except:
                         pass
 
@@ -885,7 +886,7 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # ذخیره کردن آخرین لینک ارسالی کاربر در حافظه مستقل
+    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در جستجوی موزیک
     user_last_urls = load_json(USER_LAST_URL_FILE, {})
     user_last_urls[str(user_id)] = text
     save_json(USER_LAST_URL_FILE, user_last_urls)
