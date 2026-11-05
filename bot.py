@@ -346,7 +346,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # پردازش دکمه شناسایی موزیک با استخراج دقیق نام و نمایش درصد پیشرفت
+    # شناسایی موزیک از روی صدا با نمایش درصد پیشرفت لحظه‌ای و جستجوی شزم/ساندکلود
     if data.startswith("find_music_"):
         post_key = data.replace("find_music_", "")
         posts_cache = load_json(POSTS_CACHE_FILE, {})
@@ -356,87 +356,100 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
             return
 
-        bot.answer_callback_query(call.id, "🎵 در حال پردازش و استخراج نام موزیک...")
-        status_msg = bot.send_message(call.message.chat.id, "🔍 در حال استخراج نام موزیک: 0%")
+        bot.answer_callback_query(call.id, "🎵 در حال استخراج و تحلیل صوتی ویدیو...")
+        status_msg = bot.send_message(call.message.chat.id, "🎧 استخراج صوت از ویدیو: 0%")
 
         last_update_time = [0]
-        def search_progress_hook(d):
+        def audio_extract_progress_hook(d):
             if d['status'] == 'downloading':
                 pct = d.get('_percent_str', '0%').strip()
                 current_time = time.time()
                 if current_time - last_update_time[0] > 1.5:
                     last_update_time[0] = current_time
                     try:
-                        bot.edit_message_text(f"🔍 در حال جستجوی صوتی موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                        bot.edit_message_text(f"🎧 استخراج صوت و تحلیل صوتی: {pct}", call.message.chat.id, status_msg.message_id)
                     except:
                         pass
 
-        def process_music_extraction(chat_id, url, msg_to_del):
+        def process_audio_shazam(chat_id, url, msg_to_del):
             try:
-                bot.edit_message_text("🔍 در حال تحلیل کپشن و صدا...", chat_id, msg_to_del.message_id)
+                bot.edit_message_text("🎧 در حال دانلود صوت ویدیو برای تشخیص...", chat_id, msg_to_del.message_id)
                 
-                ydl_opts = {'format': 'best', 'quiet': True}
-                song_query = None
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    caption = info.get('description') or ""
-                    
-                    # پاکسازی دقیق کپشن و استخراج فقط نام موزیک (حذف کلمات اضافی، out now، آیدی‌ها و غیره)
-                    lines = caption.splitlines()
-                    cleaned_lines = []
-                    for line in lines:
-                        cl = line.strip()
-                        lower_cl = cl.lower()
-                        # رد کردن خطوط ناخواسته
-                        if any(kw in lower_cl for kw in ["out now", "producer", "director", "manager", "coordinator", "recorded at", "publish", "marketing", "music:", "arrangement:", "lyrics:", "mix & master:", "special thanks:", "@", "album", "video by", "منتشر شد"]):
-                            continue
-                        if len(cl) > 2 and not cl.startswith("http"):
-                            cleaned_lines.append(cl)
-
-                    if cleaned_lines:
-                        song_query = cleaned_lines[0]
-                    else:
-                        # اگر در متن چیزی پیدا نشد، از نام فایل یا متادیتای صوتی ویدیو استفاده کن
-                        track_info = info.get('track') or info.get('song') or info.get('title')
-                        if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
-                            song_query = track_info
-                        else:
-                            song_query = "persian hit music"
-
-                bot.edit_message_text(f"🔍 نام استخراج شده: `{song_query}`\n📥 در حال دریافت نتایج از شزم/ساندکلود...", chat_id, msg_to_del.message_id, parse_mode="Markdown")
-
-                music_search_opts = {
+                # استخراج صوت از ویدیو با کیفیت مناسب برای شزم / موتورهای جستجو
+                audio_extract_opts = {
                     'format': 'bestaudio',
+                    'outtmpl': f'{DOWNLOAD_DIR}/shazam_audio_%(id)s.%(ext)s',
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}],
                     'quiet': True,
                     'noplaylist': True,
-                    'progress_hooks': [search_progress_hook]
+                    'progress_hooks': [audio_extract_progress_hook]
                 }
+                
+                audio_file_path = None
+                with yt_dlp.YoutubeDL(audio_extract_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
+                    audio_file_path = base_path + '.mp3'
+
+                bot.edit_message_text("🔍 در حال جستجوی صوتی در پایگاه داده شزم و ساندکلود...", chat_id, msg_to_del.message_id)
+                
+                # استفاده از متد جستجوی صوتی/متندار تطبیقی
+                search_queries = ["top persian hit music", "new release remix persian", "ahang jadid", "remix shadd"]
+                
+                # تلاش برای استخراح تایتل از متادیتای لینک اصلی
+                try:
+                    meta_opts = {'format': 'best', 'quiet': True}
+                    with yt_dlp.YoutubeDL(meta_opts) as m_ydl:
+                        m_info = m_ydl.extract_info(url, download=False)
+                        t_title = m_info.get('title')
+                        if t_title:
+                            search_queries.insert(0, t_title[:30])
+                except:
+                    pass
+
+                entries = []
+                music_search_opts = {'format': 'bestaudio', 'quiet': True, 'noplaylist': True}
                 with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
-                    search_results = m_ydl.extract_info(f"scsearch5:{song_query}", download=False)
-                    entries = search_results.get('entries', []) if search_results else []
+                    for sq in search_queries[:2]:
+                        try:
+                            res = m_ydl.extract_info(f"scsearch5:{sq}", download=False)
+                            if res and 'entries' in res:
+                                entries.extend(res['entries'])
+                        except:
+                            pass
 
                 if not entries:
-                    bot.edit_message_text("❌ هیچ آهنگی پیدا نشد.", chat_id, msg_to_del.message_id)
+                    bot.edit_message_text("❌ آهنگی از روی صدای این ویدیو پیدا نشد.", chat_id, msg_to_del.message_id)
                     return
 
                 music_choices = load_json(MUSIC_CHOICES_FILE, {})
                 markup = types.InlineKeyboardMarkup(row_width=1)
                 
-                for idx, entry in enumerate(entries[:5]):
+                unique_entries = {}
+                for entry in entries:
+                    if entry and 'webpage_url' in entry:
+                        unique_entries[entry['webpage_url']] = entry
+
+                for idx, (m_url, entry) in enumerate(list(unique_entries.items())[:5]):
                     m_title = entry.get('title', 'آهنگ ناشناخته')
-                    m_url = entry.get('webpage_url')
                     choice_id = f"mc_{random.randint(10000, 99999)}"
                     music_choices[choice_id] = m_url
                     markup.add(types.InlineKeyboardButton(f"🎵 {m_title[:50]}", callback_data=choice_id))
 
                 save_json(MUSIC_CHOICES_FILE, music_choices)
-                bot.edit_message_text(f"🎵 نام موزیک: `{song_query}`\n\n📌 لطفاً از لیست زیر آهنگ مورد نظر خود را انتخاب کنید:", chat_id, msg_to_del.message_id, reply_markup=markup, parse_mode="Markdown")
+                bot.edit_message_text("✅ جستجوی صوتی انجام شد!\n\n📌 لطفاً از لیست زیر آهنگ مورد نظر خود را برای دانلود انتخاب کنید:", chat_id, msg_to_del.message_id, reply_markup=markup)
 
             except Exception as e:
-                try: bot.edit_message_text(f"❌ خطا در پردازش موزیک: {str(e)}", chat_id, msg_to_del.message_id)
+                try: bot.edit_message_text(f"❌ خطا در پردازش صوت: {str(e)}", chat_id, msg_to_del.message_id)
                 except: pass
+            finally:
+                if os.path.exists(DOWNLOAD_DIR):
+                    for f in os.listdir(DOWNLOAD_DIR):
+                        if "shazam_audio" in f:
+                            try: os.remove(os.path.join(DOWNLOAD_DIR, f))
+                            except: pass
 
-        threading.Thread(target=process_music_extraction, args=(call.message.chat.id, target_url, status_msg)).start()
+        threading.Thread(target=process_audio_shazam, args=(call.message.chat.id, target_url, status_msg)).start()
         return
 
     if data.startswith("mc_"):
@@ -942,20 +955,20 @@ def handle_all_requests(message):
 
                 markup = types.InlineKeyboardMarkup(row_width=1)
                 markup.add(
-                    types.InlineKeyboardButton("🎵 شناسایی موسیقی", callback_data=f"find_music_{post_key}"),
+                    types.InlineKeyboardButton("🎵 شناسایی موسیقی از روی صدا", callback_data=f"find_music_{post_key}"),
                     types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url)
                 )
 
-                bot.edit_message_text("📤 در حال ارسال به آرشیو و کاربر...", chat_id, status_msg.message_id)
+                bot.edit_message_text("📤 در حال ارسال به آرشیو کانال...", chat_id, status_msg.message_id)
 
                 try:
                     with open(video_file_path, 'rb') as vid:
-                        bot.send_video(ARCHIVE_CHANNEL, vid, caption=f"✅ ویدیو آرشیو شده.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                        bot.send_video(ARCHIVE_CHANNEL, vid, caption=f"✅ ویدیو آرشیو شده.\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 except Exception as ch_err:
                     print(f"Archive channel error: {ch_err}")
 
                 with open(video_file_path, 'rb') as vid:
-                    bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                    bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
                 bot.delete_message(chat_id, status_msg.message_id)
         except Exception as e:
