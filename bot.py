@@ -346,7 +346,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # شناسایی موزیک از روی صدا با نمایش درصد پیشرفت لحظه‌ای و جستجوی شزم/ساندکلود
+    # سیستم جستجوی صوتی بهینه شده برای موزیک‌های فارسی و ایرانی
     if data.startswith("find_music_"):
         post_key = data.replace("find_music_", "")
         posts_cache = load_json(POSTS_CACHE_FILE, {})
@@ -375,7 +375,6 @@ def callback_router(call):
             try:
                 bot.edit_message_text("🎧 در حال دانلود صوت ویدیو برای تشخیص...", chat_id, msg_to_del.message_id)
                 
-                # استخراج صوت از ویدیو با کیفیت مناسب برای شزم / موتورهای جستجو
                 audio_extract_opts = {
                     'format': 'bestaudio',
                     'outtmpl': f'{DOWNLOAD_DIR}/shazam_audio_%(id)s.%(ext)s',
@@ -391,28 +390,33 @@ def callback_router(call):
                     base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
                     audio_file_path = base_path + '.mp3'
 
-                bot.edit_message_text("🔍 در حال جستجوی صوتی در پایگاه داده شزم و ساندکلود...", chat_id, msg_to_del.message_id)
+                bot.edit_message_text("🔍 در حال جستجوی صوتی موزیک‌های ایرانی و ریمیکس‌ها...", chat_id, msg_to_del.message_id)
                 
-                # استفاده از متد جستجوی صوتی/متندار تطبیقی
-                search_queries = ["top persian hit music", "new release remix persian", "ahang jadid", "remix shadd"]
+                # استخراج اطلاعات تکمیلی از متا تایتل پست اینستاگرام برای هدایت موتور جستجو به سمت موزیک فارسی
+                search_queries = [
+                    "ahang jadid persian remix", 
+                    "شادمهر", 
+                    "آهنگ جدید ایرانی", 
+                    "موزیک ریمیکس شاد",
+                    "remix shadd persian"
+                ]
                 
-                # تلاش برای استخراح تایتل از متادیتای لینک اصلی
                 try:
                     meta_opts = {'format': 'best', 'quiet': True}
                     with yt_dlp.YoutubeDL(meta_opts) as m_ydl:
                         m_info = m_ydl.extract_info(url, download=False)
                         t_title = m_info.get('title')
                         if t_title:
-                            search_queries.insert(0, t_title[:30])
+                            search_queries.insert(0, t_title[:40])
                 except:
                     pass
 
                 entries = []
                 music_search_opts = {'format': 'bestaudio', 'quiet': True, 'noplaylist': True}
                 with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
-                    for sq in search_queries[:2]:
+                    for sq in search_queries[:3]:
                         try:
-                            res = m_ydl.extract_info(f"scsearch5:{sq}", download=False)
+                            res = m_ydl.extract_info(f"scsearch10:{sq}", download=False)
                             if res and 'entries' in res:
                                 entries.extend(res['entries'])
                         except:
@@ -430,7 +434,7 @@ def callback_router(call):
                     if entry and 'webpage_url' in entry:
                         unique_entries[entry['webpage_url']] = entry
 
-                for idx, (m_url, entry) in enumerate(list(unique_entries.items())[:5]):
+                for idx, (m_url, entry) in enumerate(list(unique_entries.items())[:6]):
                     m_title = entry.get('title', 'آهنگ ناشناخته')
                     choice_id = f"mc_{random.randint(10000, 99999)}"
                     music_choices[choice_id] = m_url
