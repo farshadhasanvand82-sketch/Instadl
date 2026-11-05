@@ -5,6 +5,7 @@ import time
 import json
 import random
 import base64
+import re
 import telebot
 import yt_dlp
 from flask import Flask
@@ -21,6 +22,7 @@ SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
 PRO_STATE_FILE = os.path.join(DATA_DIR, "pro_state.json")
 POSTS_CACHE_FILE = os.path.join(DATA_DIR, "posts_cache.json")
+MUSIC_CHOICES_FILE = os.path.join(DATA_DIR, "music_choices.json")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
@@ -82,7 +84,8 @@ def save_user(message):
         "id": message.from_user.id,
         "username": message.from_user.username or "ندارد",
         "first_name": message.from_user.first_name or "بدون نام",
-        "banned": False
+        "banned": False,
+        "subscription_expire": 0 
     }
     if user_id not in users:
         users[user_id] = user_data
@@ -91,6 +94,15 @@ def save_user(message):
 def is_banned(user_id):
     users = load_users()
     return users.get(str(user_id), {}).get("banned", False)
+
+def has_active_subscription(user_id):
+    admins = load_settings().get("admins", INITIAL_ADMINS)
+    if user_id in admins:
+        return True
+    users = load_users()
+    user_data = users.get(str(user_id), {})
+    expire_time = user_data.get("subscription_expire", 0)
+    return expire_time > time.time()
 
 def load_settings():
     default_settings = {
@@ -195,7 +207,6 @@ def send_welcome(message):
     )
 
 def fetch_channel_web_updates():
-    import re
     import urllib.request
     import urllib.parse
     import html as html_parser
@@ -260,7 +271,64 @@ def fetch_channel_web_updates():
         
         time.sleep(60)
 
-# مدیریت کلیک روی دکمه شیشه‌ای شناسایی موسیقی
+def generate_users_page(page=0, search_query=""):
+    users = load_users()
+    user_items = list(users.items())
+    
+    if search_query:
+        sq = search_query.lower()
+        user_items = [
+            (uid, udata) for uid, udata in user_items 
+            if sq in uid.lower() or sq in udata.get("username", "").lower() or sq in udata.get("first_name", "").lower()
+        ]
+
+    per_page = 6
+    total_users = len(user_items)
+    max_pages = (total_users + per_page - 1) // per_page
+    if page >= max_pages and max_pages > 0:
+        page = max_pages - 1
+    if page < 0:
+        page = 0
+
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_slice = user_items[start_idx:end_idx]
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    now = time.time()
+
+    for uid, udata in current_slice:
+        name = udata.get("first_name", "بدون نام")
+        uname = udata.get("username", "ندارد")
+        expire = udata.get("subscription_expire", 0)
+        
+        has_sub = expire > now
+        if has_sub:
+            days_left = int((expire - now) / 86400)
+            sub_status = f"🟢 اشتراک فعال ({days_left} روز)"
+        else:
+            sub_status = "🔴 بدون اشتراک"
+
+        btn_text = f"{name} (@{uname}) | {sub_status}"
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"adm_usr_opt_{uid}"))
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ صفحه قبل", callback_data=f"adm_users_page_{page-1}_{search_query}"))
+    if page < max_pages - 1:
+        nav_buttons.append(types.InlineKeyboardButton("صفحه بعد ➡️", callback_data=f"adm_users_page_{page+1}_{search_query}"))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+
+    markup.add(
+        types.InlineKeyboardButton("🔍 جستجوی کاربر", callback_data="adm_users_search"),
+        types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
+    )
+    
+    text = f"👥 **لیست کاربران ربات** (صفحه {page+1} از {max_pages or 1})\n📌 کل کاربران یافت شده: {total_users}\n\nبرای مدیریت اشتراک روی نام هر کاربر کلیک کنید:"
+    return text, markup
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
     user_id = call.from_user.id
@@ -278,6 +346,132 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
+    if user_id in admins:
+        if data.startswith("adm_users_page_"):
+            parts = data.replace("adm_users_page_", "").split("_", 1)
+            p = int(parts[0])
+            sq = parts[1] if len(parts) > 1 else ""
+            txt, mrk = generate_users_page(p, sq)
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, reply_markup=mrk)
+            return
+
+        elif data == "adm_users_mgmt":
+            txt, mrk = generate_users_page(0, "")
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, reply_markup=mrk)
+            return
+
+        elif data == "adm_users_search":
+            user_states[user_id] = "waiting_user_search_query"
+            bot.answer_callback_query(call.id)
+            bot.send_message(call.message.chat.id, "🔍 لطفاً آیدی (Username) یا آیدی عددی (ID) کاربر مورد نظر را برای جستجو ارسال کنید:")
+            return
+
+        elif data.startswith("adm_usr_opt_"):
+            target_uid = data.replace("adm_usr_opt_", "")
+            users = load_users()
+            udata = users.get(target_uid, {})
+            name = udata.get("first_name", "بدون نام")
+            uname = udata.get("username", "ندارد")
+            expire = udata.get("subscription_expire", 0)
+            now = time.time()
+
+            sub_info = f"🔴 بدون اشتراک"
+            if expire > now:
+                days_left = int((expire - now) / 86400)
+                sub_info = f"🟢 فعال ({days_left} روز باقی‌مانده)"
+
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ماهه (۳۰ روز)", callback_data=f"sub_grant_{target_uid}_30"),
+                types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۲ ماهه (۶۰ روز)", callback_data=f"sub_grant_{target_uid}_60"),
+                types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ساله (۳۶۵ روز)", callback_data=f"sub_grant_{target_uid}_365"),
+                types.InlineKeyboardButton("🔴 سلب اشتراک (حذف اشتراک)", callback_data=f"sub_revoke_{target_uid}"),
+                types.InlineKeyboardButton("🔙 بازگشت به لیست کاربران", callback_data="adm_users_mgmt")
+            )
+            bot.answer_callback_query(call.id)
+            bot.edit_message_text(
+                f"👤 **مدیریت اشتراک کاربر:**\n\n"
+                f"▪️ نام: {name}\n"
+                f"▪️ یوزرنیم: @{uname}\n"
+                f"▪️ آیدی عددی: `{target_uid}`\n"
+                f"▪️ وضعیت اشتراک: {sub_info}",
+                call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+            )
+            return
+
+        elif data.startswith("sub_grant_"):
+            parts = data.replace("sub_grant_", "").split("_")
+            target_uid = parts[0]
+            days = int(parts[1])
+            
+            users = load_users()
+            if target_uid in users:
+                now = time.time()
+                current_expire = users[target_uid].get("subscription_expire", 0)
+                base_time = max(now, current_expire) if current_expire > now else now
+                new_expire = base_time + (days * 86400)
+                
+                users[target_uid]["subscription_expire"] = new_expire
+                save_json(USERS_FILE, users)
+                
+                bot.answer_callback_query(call.id, f"✅ اشتراک {days} روزه با موفقیت فعال شد!", show_alert=True)
+                
+                udata = users[target_uid]
+                name = udata.get("first_name", "بدون نام")
+                uname = udata.get("username", "ندارد")
+                days_left = int((new_expire - now) / 86400)
+                
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ماهه (۳۰ روز)", callback_data=f"sub_grant_{target_uid}_30"),
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۲ ماهه (۶۰ روز)", callback_data=f"sub_grant_{target_uid}_60"),
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ساله (۳۶۵ روز)", callback_data=f"sub_grant_{target_uid}_365"),
+                    types.InlineKeyboardButton("🔴 سلب اشتراک (حذف اشتراک)", callback_data=f"sub_revoke_{target_uid}"),
+                    types.InlineKeyboardButton("🔙 بازگشت به لیست کاربران", callback_data="adm_users_mgmt")
+                )
+                bot.edit_message_text(
+                    f"👤 **مدیریت اشتراک کاربر:**\n\n"
+                    f"▪️ نام: {name}\n"
+                    f"▪️ یوزرنیم: @{uname}\n"
+                    f"▪️ آیدی عددی: `{target_uid}`\n"
+                    f"▪️ وضعیت اشتراک: 🟢 فعال ({days_left} روز باقی‌مانده)",
+                    call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+                )
+            return
+
+        elif data.startswith("sub_revoke_"):
+            target_uid = data.replace("sub_revoke_", "")
+            users = load_users()
+            if target_uid in users:
+                users[target_uid]["subscription_expire"] = 0
+                save_json(USERS_FILE, users)
+                
+                bot.answer_callback_query(call.id, "❌ اشتراک کاربر با موفقیت سلب (حذف) شد!", show_alert=True)
+                
+                udata = users[target_uid]
+                name = udata.get("first_name", "بدون نام")
+                uname = udata.get("username", "ندارد")
+                
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ماهه (۳۰ روز)", callback_data=f"sub_grant_{target_uid}_30"),
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۲ ماهه (۶۰ روز)", callback_data=f"sub_grant_{target_uid}_60"),
+                    types.InlineKeyboardButton("🟢 فعال‌سازی اشتراک ۱ ساله (۳۶۵ روز)", callback_data=f"sub_grant_{target_uid}_365"),
+                    types.InlineKeyboardButton("🔴 سلب اشتراک (حذف اشتراک)", callback_data=f"sub_revoke_{target_uid}"),
+                    types.InlineKeyboardButton("🔙 بازگشت به لیست کاربران", callback_data="adm_users_mgmt")
+                )
+                bot.edit_message_text(
+                    f"👤 **مدیریت اشتراک کاربر:**\n\n"
+                    f"▪️ نام: {name}\n"
+                    f"▪️ یوزرنیم: @{uname}\n"
+                    f"▪️ آیدی عددی: `{target_uid}`\n"
+                    f"▪️ وضعیت اشتراک: 🔴 بدون اشتراک",
+                    call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+                )
+            return
+
     if data.startswith("find_music_"):
         post_key = data.replace("find_music_", "")
         posts_cache = load_json(POSTS_CACHE_FILE, {})
@@ -287,9 +481,80 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
             return
 
-        bot.answer_callback_query(call.id, "🎵 در حال جستجوی موزیک...")
+        bot.answer_callback_query(call.id, "🎵 در حال جستجو و استخراج نام آهنگ...")
+        status_msg = bot.send_message(call.message.chat.id, "🔍 در حال جستجوی نام موزیک در کپشن و منابع...")
+
+        try:
+            ydl_opts = {'format': 'best', 'quiet': True}
+            song_query = None
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(target_url, download=False)
+                caption = info.get('description') or ""
+                
+                quotes_match = re.findall(r"['‘«](.+?)['’»]", caption)
+                if quotes_match:
+                    song_query = quotes_match[0]
+                else:
+                    lines = caption.splitlines()
+                    for line in lines:
+                        cl = line.strip()
+                        lower_cl = cl.lower()
+                        if any(kw in lower_cl for kw in ["out now", "producer", "director", "manager", "coordinator", "recorded at", "publish", "marketing", "@", "album", "video by"]):
+                            continue
+                        if len(cl) > 3 and not cl.startswith("http"):
+                            song_query = cl
+                            break
+                    
+                    if not song_query:
+                        track_info = info.get('track') or info.get('song') or info.get('title')
+                        if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
+                            song_query = track_info
+
+            if not song_query:
+                song_query = "remix persian"
+
+            music_search_opts = {
+                'format': 'bestaudio',
+                'quiet': True,
+                'noplaylist': True,
+            }
+            with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
+                search_results = m_ydl.extract_info(f"scsearch5:{song_query}", download=False)
+                entries = search_results.get('entries', []) if search_results else []
+
+            if not entries:
+                bot.edit_message_text("❌ هیچ آهنگی با این مشخصات پیدا نشد.", call.message.chat.id, status_msg.message_id)
+                return
+
+            music_choices = load_json(MUSIC_CHOICES_FILE, {})
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            
+            for idx, entry in enumerate(entries[:5]):
+                m_title = entry.get('title', 'آهنگ ناشناخته')
+                m_url = entry.get('webpage_url')
+                choice_id = f"mc_{random.randint(10000, 99999)}"
+                music_choices[choice_id] = m_url
+                markup.add(types.InlineKeyboardButton(f"🎵 {m_title[:50]}", callback_data=choice_id))
+
+            save_json(MUSIC_CHOICES_FILE, music_choices)
+            bot.edit_message_text(f"🔍 نام جستجو شده: `{song_query}`\n\n📌 لطفاً از لیست زیر آهنگ مورد نظر خود را انتخاب کنید:", call.message.chat.id, status_msg.message_id, reply_markup=markup, parse_mode="Markdown")
+
+        except Exception as e:
+            try: bot.edit_message_text(f"❌ خطا در جستجو: {str(e)}", call.message.chat.id, status_msg.message_id)
+            except: pass
+        return
+
+    if data.startswith("mc_"):
+        music_choices = load_json(MUSIC_CHOICES_FILE, {})
+        m_url = music_choices.get(data)
+
+        if not m_url:
+            bot.answer_callback_query(call.id, "❌ این لینک منقضی شده است. مجدداً تلاش کنید.", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id, "📥 در حال دانلود و ارسال موزیک...")
         status_msg = bot.send_message(call.message.chat.id, "📥 دانلود موزیک: 0%")
-        
+
         last_update_time = [0]
         def music_progress_hook(d):
             if d['status'] == 'downloading':
@@ -302,69 +567,40 @@ def callback_router(call):
                     except:
                         pass
 
-        def process_music_from_cache(chat_id, url, msg_to_del):
+        def download_and_send_selected_music(chat_id, music_url, msg_to_del):
             try:
-                ydl_opts = {'format': 'best', 'quiet': True}
-                song_name = None
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    track_info = info.get('track') or info.get('song') or info.get('title')
-                    if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
-                        song_name = track_info
-                    else:
-                        caption = info.get('description') or ""
-                        lines = caption.splitlines()
-                        for line in lines:
-                            cl = line.strip()
-                            if len(cl) > 3 and not any(kw in cl.lower() for kw in ["producer", "director", "manager", "@", "album"]):
-                                song_name = cl
-                                break
-                        if not song_name and lines:
-                            for l in lines:
-                                if len(l.strip()) > 3 and "@" not in l:
-                                    song_name = l.strip()[:40]
-                                    break
+                music_dl_opts = {
+                    'format': 'bestaudio',
+                    'outtmpl': f'{DOWNLOAD_DIR}/selected_music_%(id)s.%(ext)s',
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                    'quiet': True, 'noplaylist': True,
+                    'progress_hooks': [music_progress_hook]
+                }
+                final_music_path = None
+                with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
+                    info_dl = music_ydl.extract_info(music_url, download=True)
+                    final_music_path = music_ydl.prepare_filename(info_dl).rsplit('.', 1)[0] + '.mp3'
 
-                if song_name:
-                    music_dl_opts = {
-                        'format': 'bestaudio',
-                        'outtmpl': f'{DOWNLOAD_DIR}/sc_music_%(id)s.%(ext)s',
-                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                        'quiet': True, 'noplaylist': True,
-                        'progress_hooks': [music_progress_hook]
-                    }
-                    final_music_path = None
-                    with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
-                        music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
-                        if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
-                            best_match = music_info['entries'][0]
-                            if best_match and 'webpage_url' in best_match:
-                                music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
-                                final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
-                    
-                    if final_music_path and os.path.exists(final_music_path):
-                        bot.edit_message_text("📤 در حال ارسال موزیک...", chat_id, msg_to_del.message_id)
-                        with open(final_music_path, 'rb') as aud:
-                            bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
-                        bot.delete_message(chat_id, msg_to_del.message_id)
-                    else:
-                        bot.edit_message_text("⚠️ فایل صوتی این موزیک یافت نشد.", chat_id, msg_to_del.message_id)
+                if final_music_path and os.path.exists(final_music_path):
+                    bot.edit_message_text("📤 در حال ارسال موزیک...", chat_id, msg_to_del.message_id)
+                    with open(final_music_path, 'rb') as aud:
+                        bot.send_audio(chat_id, aud, caption="🎵 موزیک انتخابی شما\n🤖 t.me/zeucdl_bot")
+                    bot.delete_message(chat_id, msg_to_del.message_id)
                 else:
-                    bot.edit_message_text("ℹ️ نام موزیکی برای این پست یافت نشد.", chat_id, msg_to_del.message_id)
-            except Exception as e:
-                try: bot.edit_message_text(f"❌ خطا: {str(e)}", chat_id, msg_to_del.message_id)
+                    bot.edit_message_text("⚠️ خطا در دریافت فایل صوتی موزیک.", chat_id, msg_to_del.message_id)
+            except Exception as ex:
+                try: bot.edit_message_text(f"❌ خطا: {str(ex)}", chat_id, msg_to_del.message_id)
                 except: pass
             finally:
                 clear_downloads()
 
-        threading.Thread(target=process_music_from_cache, args=(call.message.chat.id, target_url, status_msg)).start()
+        threading.Thread(target=download_and_send_selected_music, args=(call.message.chat.id, m_url, status_msg)).start()
         return
 
     if user_id not in admins:
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
         return
 
-    # پنل مدیریت ادمین
     if data == "adm_stats":
         users = load_users()
         child_bots = load_child_bots()
@@ -418,30 +654,9 @@ def callback_router(call):
         bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
 
     elif data == "adm_users_mgmt":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("🚫 مسدود/آزاد کردن کاربر", callback_data="adm_ban_user"),
-            types.InlineKeyboardButton("✉️ ارسال پیام به کاربر", callback_data="adm_msg_user"),
-            types.InlineKeyboardButton("➕ افزودن ادمین جدید", callback_data="adm_add_admin"),
-            types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
-        )
+        txt, mrk = generate_users_page(0, "")
         bot.answer_callback_query(call.id)
-        bot.edit_message_text("👥 **مدیریت کاربران و ادمین‌ها:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "adm_ban_user":
-        user_states[user_id] = "waiting_ban_input"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🚫 آیدی عددی کاربر را بفرستید:")
-
-    elif data == "adm_msg_user":
-        user_states[user_id] = "waiting_user_msg_id"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "✉️ ابتدا آیدی عددی کاربر را بفرستید:")
-
-    elif data == "adm_add_admin":
-        user_states[user_id] = "waiting_new_admin_id"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "➕ آیدی عددی کاربر جدید را بفرستید:")
+        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, reply_markup=mrk)
 
     elif data == "adm_child_bots_mgmt":
         child_bots = load_child_bots()
@@ -527,7 +742,7 @@ def callback_router(call):
             types.InlineKeyboardButton("📊 آمار کاربران", callback_data="adm_stats"),
             types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
             types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
-            types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
+            types.InlineKeyboardButton("👥 مدیریت کاربران", callback_data="adm_users_mgmt"),
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
         )
@@ -570,11 +785,18 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("📊 آمار کاربران", callback_data="adm_stats"),
                 types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
                 types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
-                types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
+                types.InlineKeyboardButton("👥 مدیریت کاربران", callback_data="adm_users_mgmt"),
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
+            return
+
+        elif current_state == "waiting_user_search_query":
+            user_states.pop(user_id, None)
+            sq = text.strip()
+            txt, mrk = generate_users_page(0, sq)
+            bot.reply_to(message, f"🔍 **نتیجه جستجو برای:** `{sq}`", reply_markup=mrk, parse_mode="Markdown")
             return
 
         elif current_state and current_state.startswith("set_name_"):
@@ -589,9 +811,19 @@ def handle_all_requests(message):
         bot.reply_to(message, "🤖 **این ربات با سیستم پیشرفته ساخت ربات ساخته شده است.**\n\n📌 سازنده و پشتیبان اصلی:\n@izeucs", reply_markup=get_reply_keyboard(user_id))
         return
 
+    # بررسی وضعیت اشتراک برای دکمه ساخت ربات
     if text == btn_names.get("builder", "ساخت ربات دانلودر"):
-        user_states[user_id] = "waiting_bot_token"
-        bot.reply_to(message, "🤖 **ساخت ربات دانلودر اختصاصی:**\n\nلطفاً توکن ربات خود را از `@BotFather` بفرستید:", reply_markup=get_reply_keyboard(user_id))
+        if has_active_subscription(user_id):
+            user_states[user_id] = "waiting_bot_token"
+            bot.reply_to(message, "🤖 **ساخت ربات دانلودر اختصاصی:**\n\nاشتراک شما فعال است! لطفاً توکن ربات خود را از `@BotFather` بفرستید:", reply_markup=get_reply_keyboard(user_id))
+        else:
+            bot.reply_to(
+                message,
+                "برای استفاده از این دکمه و ساخت ربات اختصاصی خودتون به ایدی زیر پیام بدید:\n\n"
+                "هزینه یک ماه اشتراک این دکمه 100 هزارتومان\n\n"
+                "ایدی جهت خرید:\n@izeucs",
+                reply_markup=get_reply_keyboard(user_id)
+            )
         return
 
     if current_state == "waiting_bot_token":
@@ -651,7 +883,6 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # تابع پس‌زمینه با نمایش زنده درصد دانلود و آپلود بدون حواشی اضافی
     def process_instagram_link(chat_id, url, user_st_key):
         status_msg = bot.send_message(chat_id, "📥 دانلود ویدیو: 0%")
         
@@ -702,14 +933,12 @@ def handle_all_requests(message):
 
                 bot.edit_message_text("📤 در حال ارسال به آرشیو و کاربر...", chat_id, status_msg.message_id)
 
-                # ارسال به کانال آرشیو
                 try:
                     with open(video_file_path, 'rb') as vid:
                         bot.send_video(ARCHIVE_CHANNEL, vid, caption=f"✅ ویدیو آرشیو شده.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
                 except Exception as ch_err:
                     print(f"Archive channel error: {ch_err}")
 
-                # ارسال ویدیو به کاربر
                 with open(video_file_path, 'rb') as vid:
                     bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
@@ -731,7 +960,6 @@ def handle_all_requests(message):
             try:
                 req = urllib.request.Request(text, headers={'User-Agent': 'Mozilla/5.0'})
                 html = urllib.request.urlopen(req).read().decode('utf-8')
-                import re
                 m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                 if m: target_url = f"scsearch:{m.group(1)}"
             except: pass
