@@ -207,6 +207,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
+# بررسی و دریافت خودکار سرورها هر ۳۰ ثانیه یک‌بار و ارسال به کانال مقصد با قابلیت کپی و آیدی چنل
 def fetch_channel_web_updates():
     import urllib.request
     import urllib.parse
@@ -256,6 +257,7 @@ def fetch_channel_web_updates():
                                         encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
                                         final_cfg = f"{cfg}#{encoded_name}"
                                     
+                                    # قالب‌بندی به صورت قابل کپی به همراه آیدی کانال در زیر پیام
                                     msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
                                     try:
                                         bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
@@ -270,7 +272,7 @@ def fetch_channel_web_updates():
         except Exception as e:
             print(f"Background fetch error: {e}")
         
-        time.sleep(60)
+        time.sleep(30) # بررسی و دریافت خودکار هر ۳۰ ثانیه یک بار
 
 def generate_users_page(page=0, search_query=""):
     users = load_users()
@@ -692,7 +694,6 @@ def callback_router(call):
         settings["pro_sources"] = []
         save_settings(settings)
         bot.answer_callback_query(call.id, "✅ کانال‌های منبع پاک شدند!", show_alert=True)
-        # بازگشت به منوی پرو
         call.data = "adm_pro_mgmt"
         callback_router(call)
         return
