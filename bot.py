@@ -207,7 +207,6 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# قابلیت پرو: دریافت و انتقال خودکار اطلاعات سرور و کانفیگ‌ها از منابع
 def fetch_channel_web_updates():
     import urllib.request
     import urllib.parse
@@ -348,7 +347,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # شناسایی موزیک بر اساس آخرین لینک ارسالی کاربر با نمایش صد درصدی درصدها
+    # شناسایی موزیک بر اساس آخرین لینک ارسالی کاربر با نمایش درصدها
     if data.startswith("find_music_"):
         user_last_urls = load_json(USER_LAST_URL_FILE, {})
         target_url = user_last_urls.get(str(user_id))
@@ -663,6 +662,51 @@ def callback_router(call):
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید مثل `@channel`:")
 
+    elif data == "adm_pro_mgmt":
+        sources = ", ".join(settings.get("pro_sources", [])) or "تنظیم نشده"
+        dest = settings.get("pro_dest") or "تنظیم نشده"
+        pname = settings.get("pro_name", "VIP Server")
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("➕ افزودن کانال منبع پرو", callback_data="pro_add_src"),
+            types.InlineKeyboardButton("➖ پاک کردن کانال‌های منبع", callback_data="pro_clear_src"),
+            types.InlineKeyboardButton("🎯 تنظیم کانال مقصد", callback_data="pro_set_dest"),
+            types.InlineKeyboardButton("✏️ تغییر نام پیشوند سرور", callback_data="pro_set_name"),
+            types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
+        )
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            f"⚙️ **مدیریت بخش پرو و انتقال سرورها:**\n\n"
+            f"📥 کانال‌های منبع: `{sources}`\n"
+            f"📤 کانال مقصد: `{dest}`\n"
+            f"🏷 پیشوند نام سرورها: `{pname}`",
+            call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+        )
+
+    elif data == "pro_add_src":
+        user_states[user_id] = "waiting_pro_src"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "📥 آیدی کانال منبع پرو را بفرستید (مثل `@source_channel`):")
+
+    elif data == "pro_clear_src":
+        settings["pro_sources"] = []
+        save_settings(settings)
+        bot.answer_callback_query(call.id, "✅ کانال‌های منبع پاک شدند!", show_alert=True)
+        # بازگشت به منوی پرو
+        call.data = "adm_pro_mgmt"
+        callback_router(call)
+        return
+
+    elif data == "pro_set_dest":
+        user_states[user_id] = "waiting_pro_dest"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🎯 آیدی کانال مقصد را بفرستید (مثل `@dest_channel`):")
+
+    elif data == "pro_set_name":
+        user_states[user_id] = "waiting_pro_name"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "✏️ نام یا پیشوند جدید سرورها را بفرستید (مثل `VIP Server`):")
+
     elif data == "adm_child_bots_mgmt":
         child_bots = load_child_bots()
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -748,7 +792,8 @@ def callback_router(call):
             types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
             types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
             types.InlineKeyboardButton("👥 مدیریت کاربران", callback_data="adm_users_mgmt"),
-            types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
+            types.InlineKeyboardButton("⚙️ مدیریت پرو و سرورها", callback_data="adm_pro_mgmt"),
+            types.InlineKeyboardButton("🤖 مدیریت ربات‌ها", callback_data="adm_child_bots_mgmt"),
             types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
@@ -791,7 +836,8 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm_broadcast"),
                 types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
                 types.InlineKeyboardButton("👥 مدیریت کاربران", callback_data="adm_users_mgmt"),
-                types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
+                types.InlineKeyboardButton("⚙️ مدیریت پرو و سرورها", callback_data="adm_pro_mgmt"),
+                types.InlineKeyboardButton("🤖 مدیریت ربات‌ها", callback_data="adm_child_bots_mgmt"),
                 types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
@@ -802,6 +848,31 @@ def handle_all_requests(message):
             sq = text.strip()
             txt, mrk = generate_users_page(0, sq)
             bot.reply_to(message, f"🔍 **نتیجه جستجو برای:** `{sq}`", reply_markup=mrk, parse_mode="Markdown")
+            return
+
+        elif current_state == "waiting_pro_src":
+            user_states.pop(user_id, None)
+            src_ch = text.strip()
+            if src_ch not in settings["pro_sources"]:
+                settings["pro_sources"].append(src_ch)
+                save_settings(settings)
+            bot.reply_to(message, f"✅ کانال منبع `{src_ch}` اضافه شد!", reply_markup=get_reply_keyboard(user_id))
+            return
+
+        elif current_state == "waiting_pro_dest":
+            user_states.pop(user_id, None)
+            dest_ch = text.strip()
+            settings["pro_dest"] = dest_ch
+            save_settings(settings)
+            bot.reply_to(message, f"✅ کانال مقصد روی `{dest_ch}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
+            return
+
+        elif current_state == "waiting_pro_name":
+            user_states.pop(user_id, None)
+            pname = text.strip()
+            settings["pro_name"] = pname
+            save_settings(settings)
+            bot.reply_to(message, f"✅ نام پیشوند سرور روی `{pname}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
             return
 
         elif current_state and current_state.startswith("set_name_"):
@@ -887,7 +958,7 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در شناسایی موسیقی
+    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در جستجوی موزیک
     user_last_urls = load_json(USER_LAST_URL_FILE, {})
     user_last_urls[str(user_id)] = text
     save_json(USER_LAST_URL_FILE, user_last_urls)
