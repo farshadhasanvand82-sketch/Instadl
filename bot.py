@@ -21,7 +21,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
 PRO_STATE_FILE = os.path.join(DATA_DIR, "pro_state.json")
-POSTS_CACHE_FILE = os.path.join(DATA_DIR, "posts_cache.json")
+USER_LAST_URL_FILE = os.path.join(DATA_DIR, "user_last_url.json")
 MUSIC_CHOICES_FILE = os.path.join(DATA_DIR, "music_choices.json")
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -346,22 +346,21 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # سیستم جستجوی ایزوله با درصد پیشرفت لحظه‌ای
+    # شناسایی موزیک بر اساس آخرین لینک ارسالی همان کاربر با نمایش کامل درصدها
     if data.startswith("find_music_"):
-        post_key = data.replace("find_music_", "")
-        posts_cache = load_json(POSTS_CACHE_FILE, {})
-        target_url = posts_cache.get(post_key)
+        user_last_urls = load_json(USER_LAST_URL_FILE, {})
+        target_url = user_last_urls.get(str(user_id))
 
         if not target_url:
-            bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ هیچ لینک فعالی از شما ثبت نشده است. لطفاً ابتدا لینک پست را بفرستید.", show_alert=True)
             return
 
-        bot.answer_callback_query(call.id, "🎵 در حال استخراج درصدها...")
-        status_msg = bot.send_message(call.message.chat.id, "🎧 استخراج متادیتا: 0%")
+        bot.answer_callback_query(call.id, "🎵 شروع استخراج موزیک از آخرین لینک...")
+        status_msg = bot.send_message(call.message.chat.id, "🎧 استخراج متادیتا و اتصال به موتور جستجو: 20%")
 
-        def process_isolated_audio_search(chat_id, url, msg_to_del):
+        def process_user_last_url_search(chat_id, url, msg_to_del):
             try:
-                try: bot.edit_message_text("🎧 استخراج متادیتا: 30%", chat_id, msg_to_del.message_id)
+                try: bot.edit_message_text("🎧 تحلیل اطلاعات پست: 50%", chat_id, msg_to_del.message_id)
                 except: pass
 
                 meta_opts = {'format': 'best', 'quiet': True}
@@ -379,23 +378,23 @@ def callback_router(call):
                         if lines:
                             search_query = lines[0][:50]
 
-                try: bot.edit_message_text("🔍 جستجوی صوتی: 70%", chat_id, msg_to_del.message_id)
+                try: bot.edit_message_text("🔍 جستجوی دقیق موزیک کامل: 80%", chat_id, msg_to_del.message_id)
                 except: pass
 
                 entries = []
                 music_search_opts = {'format': 'bestaudio', 'quiet': True, 'noplaylist': True}
                 with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
-                    res = m_ydl.extract_info(f"scsearch8:{search_query}", download=False)
+                    res = m_ydl.extract_info(f"scsearch10:{search_query}", download=False)
                     if res and 'entries' in res:
                         entries.extend(res['entries'])
 
                 if not entries:
-                    res2 = m_ydl.extract_info(f"scsearch8:ahang jadid persian", download=False)
+                    res2 = m_ydl.extract_info(f"scsearch10:ahang jadid persian remix", download=False)
                     if res2 and 'entries' in res2:
                         entries.extend(res2['entries'])
 
                 if not entries:
-                    bot.edit_message_text("❌ آهنگی برای این پست یافت نشد (100%).", chat_id, msg_to_del.message_id)
+                    bot.edit_message_text("❌ آهنگی برای این لینک یافت نشد (100%).", chat_id, msg_to_del.message_id)
                     return
 
                 try: bot.edit_message_text("✅ جستجوی صوتی کامل شد: 100%", chat_id, msg_to_del.message_id)
@@ -416,7 +415,7 @@ def callback_router(call):
                     markup.add(types.InlineKeyboardButton(f"🎵 {m_title[:50]}", callback_data=choice_id))
 
                 save_json(MUSIC_CHOICES_FILE, music_choices)
-                bot.send_message(chat_id, "📌 لطفاً آهنگ مورد نظر خود را از لیست زیر انتخاب کنید:", reply_markup=markup)
+                bot.send_message(chat_id, "📌 لطفاً آهنگ کامل و واقعی مورد نظر خود را از لیست زیر انتخاب کنید (100%):", reply_markup=markup)
 
             except Exception as e:
                 try: bot.edit_message_text(f"❌ خطا در پردازش: {str(e)}", chat_id, msg_to_del.message_id)
@@ -424,7 +423,7 @@ def callback_router(call):
             finally:
                 clear_downloads()
 
-        threading.Thread(target=process_isolated_audio_search, args=(call.message.chat.id, target_url, status_msg)).start()
+        threading.Thread(target=process_user_last_url_search, args=(call.message.chat.id, target_url, status_msg)).start()
         return
 
     if data.startswith("mc_"):
@@ -435,7 +434,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ این لینک منقضی شده است. مجدداً تلاش کنید.", show_alert=True)
             return
 
-        bot.answer_callback_query(call.id, "📥 در حال دانلود و ارسال موزیک...")
+        bot.answer_callback_query(call.id, "📥 در حال دانلود موزیک...")
         status_msg = bot.send_message(call.message.chat.id, "📥 دانلود موزیک: 0%")
 
         last_update_time = [0]
@@ -446,7 +445,7 @@ def callback_router(call):
                 if current_time - last_update_time[0] > 1.5:
                     last_update_time[0] = current_time
                     try:
-                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", chat_id, status_msg.message_id)
                     except:
                         pass
 
@@ -467,7 +466,7 @@ def callback_router(call):
                 if final_music_path and os.path.exists(final_music_path):
                     bot.edit_message_text("📤 در حال ارسال موزیک: 100%", chat_id, msg_to_del.message_id)
                     with open(final_music_path, 'rb') as aud:
-                        bot.send_audio(chat_id, aud, caption="🎵 موزیک انتخابی شما (100%)\n🤖 t.me/zeucdl_bot")
+                        bot.send_audio(chat_id, aud, caption="🎵 موزیک کامل و واقعی شما (100%)\n🤖 t.me/zeucdl_bot")
                     bot.delete_message(chat_id, msg_to_del.message_id)
                 else:
                     bot.edit_message_text("⚠️ خطا در دریافت فایل صوتی موزیک.", chat_id, msg_to_del.message_id)
@@ -660,7 +659,7 @@ def callback_router(call):
     elif data == "adm_add_ch":
         user_states[user_id] = "waiting_add_channel"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
+        bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید مثل `@channel`:")
 
     elif data == "adm_child_bots_mgmt":
         child_bots = load_child_bots()
@@ -886,6 +885,11 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
+    # ذخیره کردن آخرین لینک ارسالی کاربر در حافظه مستقل
+    user_last_urls = load_json(USER_LAST_URL_FILE, {})
+    user_last_urls[str(user_id)] = text
+    save_json(USER_LAST_URL_FILE, user_last_urls)
+
     def process_instagram_link(chat_id, url, user_st_key):
         status_msg = bot.send_message(chat_id, "📥 دانلود ویدیو: 0%")
         
@@ -1063,7 +1067,7 @@ def run_child_bot(token):
                     def child_dl_hook(d):
                         if d['status'] == 'downloading':
                             pct = d.get('_percent_str', '0%').strip()
-                            try: c_bot.exit_message_text(f"📥 دانلود ویدیو: {pct}", msg.chat.id, status.message_id)
+                            try: c_bot.edit_message_text(f"📥 دانلود ویدیو: {pct}", msg.chat.id, status.message_id)
                             except: pass
 
                     ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/child_%(id)s.%(ext)s', 'quiet': True, 'progress_hooks': [child_dl_hook]}
