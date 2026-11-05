@@ -346,6 +346,152 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
+    # پردازش دکمه شناسایی موزیک با استخراج دقیق نام و نمایش درصد پیشرفت
+    if data.startswith("find_music_"):
+        post_key = data.replace("find_music_", "")
+        posts_cache = load_json(POSTS_CACHE_FILE, {})
+        target_url = posts_cache.get(post_key)
+
+        if not target_url:
+            bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id, "🎵 در حال پردازش و استخراج نام موزیک...")
+        status_msg = bot.send_message(call.message.chat.id, "🔍 در حال استخراج نام موزیک: 0%")
+
+        last_update_time = [0]
+        def search_progress_hook(d):
+            if d['status'] == 'downloading':
+                pct = d.get('_percent_str', '0%').strip()
+                current_time = time.time()
+                if current_time - last_update_time[0] > 1.5:
+                    last_update_time[0] = current_time
+                    try:
+                        bot.edit_message_text(f"🔍 در حال جستجوی صوتی موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                    except:
+                        pass
+
+        def process_music_extraction(chat_id, url, msg_to_del):
+            try:
+                bot.edit_message_text("🔍 در حال تحلیل کپشن و صدا...", chat_id, msg_to_del.message_id)
+                
+                ydl_opts = {'format': 'best', 'quiet': True}
+                song_query = None
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    caption = info.get('description') or ""
+                    
+                    # پاکسازی دقیق کپشن و استخراج فقط نام موزیک (حذف کلمات اضافی، out now، آیدی‌ها و غیره)
+                    lines = caption.splitlines()
+                    cleaned_lines = []
+                    for line in lines:
+                        cl = line.strip()
+                        lower_cl = cl.lower()
+                        # رد کردن خطوط ناخواسته
+                        if any(kw in lower_cl for kw in ["out now", "producer", "director", "manager", "coordinator", "recorded at", "publish", "marketing", "music:", "arrangement:", "lyrics:", "mix & master:", "special thanks:", "@", "album", "video by", "منتشر شد"]):
+                            continue
+                        if len(cl) > 2 and not cl.startswith("http"):
+                            cleaned_lines.append(cl)
+
+                    if cleaned_lines:
+                        song_query = cleaned_lines[0]
+                    else:
+                        # اگر در متن چیزی پیدا نشد، از نام فایل یا متادیتای صوتی ویدیو استفاده کن
+                        track_info = info.get('track') or info.get('song') or info.get('title')
+                        if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
+                            song_query = track_info
+                        else:
+                            song_query = "persian hit music"
+
+                bot.edit_message_text(f"🔍 نام استخراج شده: `{song_query}`\n📥 در حال دریافت نتایج از شزم/ساندکلود...", chat_id, msg_to_del.message_id, parse_mode="Markdown")
+
+                music_search_opts = {
+                    'format': 'bestaudio',
+                    'quiet': True,
+                    'noplaylist': True,
+                    'progress_hooks': [search_progress_hook]
+                }
+                with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
+                    search_results = m_ydl.extract_info(f"scsearch5:{song_query}", download=False)
+                    entries = search_results.get('entries', []) if search_results else []
+
+                if not entries:
+                    bot.edit_message_text("❌ هیچ آهنگی پیدا نشد.", chat_id, msg_to_del.message_id)
+                    return
+
+                music_choices = load_json(MUSIC_CHOICES_FILE, {})
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                
+                for idx, entry in enumerate(entries[:5]):
+                    m_title = entry.get('title', 'آهنگ ناشناخته')
+                    m_url = entry.get('webpage_url')
+                    choice_id = f"mc_{random.randint(10000, 99999)}"
+                    music_choices[choice_id] = m_url
+                    markup.add(types.InlineKeyboardButton(f"🎵 {m_title[:50]}", callback_data=choice_id))
+
+                save_json(MUSIC_CHOICES_FILE, music_choices)
+                bot.edit_message_text(f"🎵 نام موزیک: `{song_query}`\n\n📌 لطفاً از لیست زیر آهنگ مورد نظر خود را انتخاب کنید:", chat_id, msg_to_del.message_id, reply_markup=markup, parse_mode="Markdown")
+
+            except Exception as e:
+                try: bot.edit_message_text(f"❌ خطا در پردازش موزیک: {str(e)}", chat_id, msg_to_del.message_id)
+                except: pass
+
+        threading.Thread(target=process_music_extraction, args=(call.message.chat.id, target_url, status_msg)).start()
+        return
+
+    if data.startswith("mc_"):
+        music_choices = load_json(MUSIC_CHOICES_FILE, {})
+        m_url = music_choices.get(data)
+
+        if not m_url:
+            bot.answer_callback_query(call.id, "❌ این لینک منقضی شده است. مجدداً تلاش کنید.", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id, "📥 در حال دانلود و ارسال موزیک...")
+        status_msg = bot.send_message(call.message.chat.id, "📥 دانلود موزیک: 0%")
+
+        last_update_time = [0]
+        def music_progress_hook(d):
+            if d['status'] == 'downloading':
+                pct = d.get('_percent_str', '0%').strip()
+                current_time = time.time()
+                if current_time - last_update_time[0] > 1.5:
+                    last_update_time[0] = current_time
+                    try:
+                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                    except:
+                        pass
+
+        def download_and_send_selected_music(chat_id, music_url, msg_to_del):
+            try:
+                music_dl_opts = {
+                    'format': 'bestaudio',
+                    'outtmpl': f'{DOWNLOAD_DIR}/selected_music_%(id)s.%(ext)s',
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                    'quiet': True, 'noplaylist': True,
+                    'progress_hooks': [music_progress_hook]
+                }
+                final_music_path = None
+                with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
+                    info_dl = music_ydl.extract_info(music_url, download=True)
+                    final_music_path = music_ydl.prepare_filename(info_dl).rsplit('.', 1)[0] + '.mp3'
+
+                if final_music_path and os.path.exists(final_music_path):
+                    bot.edit_message_text("📤 در حال ارسال موزیک...", chat_id, msg_to_del.message_id)
+                    with open(final_music_path, 'rb') as aud:
+                        bot.send_audio(chat_id, aud, caption="🎵 موزیک انتخابی شما\n🤖 t.me/zeucdl_bot")
+                    bot.delete_message(chat_id, msg_to_del.message_id)
+                else:
+                    bot.edit_message_text("⚠️ خطا در دریافت فایل صوتی موزیک.", chat_id, msg_to_del.message_id)
+            except Exception as ex:
+                try: bot.edit_message_text(f"❌ خطا: {str(ex)}", chat_id, msg_to_del.message_id)
+                except: pass
+            finally:
+                clear_downloads()
+
+        threading.Thread(target=download_and_send_selected_music, args=(call.message.chat.id, m_url, status_msg)).start()
+        return
+
     if user_id in admins:
         if data.startswith("adm_users_page_"):
             parts = data.replace("adm_users_page_", "").split("_", 1)
@@ -472,131 +618,6 @@ def callback_router(call):
                 )
             return
 
-    if data.startswith("find_music_"):
-        post_key = data.replace("find_music_", "")
-        posts_cache = load_json(POSTS_CACHE_FILE, {})
-        target_url = posts_cache.get(post_key)
-
-        if not target_url:
-            bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
-            return
-
-        bot.answer_callback_query(call.id, "🎵 در حال جستجو و استخراج نام آهنگ...")
-        status_msg = bot.send_message(call.message.chat.id, "🔍 در حال جستجوی نام موزیک در کپشن و منابع...")
-
-        try:
-            ydl_opts = {'format': 'best', 'quiet': True}
-            song_query = None
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(target_url, download=False)
-                caption = info.get('description') or ""
-                
-                quotes_match = re.findall(r"['‘«](.+?)['’»]", caption)
-                if quotes_match:
-                    song_query = quotes_match[0]
-                else:
-                    lines = caption.splitlines()
-                    for line in lines:
-                        cl = line.strip()
-                        lower_cl = cl.lower()
-                        if any(kw in lower_cl for kw in ["out now", "producer", "director", "manager", "coordinator", "recorded at", "publish", "marketing", "@", "album", "video by"]):
-                            continue
-                        if len(cl) > 3 and not cl.startswith("http"):
-                            song_query = cl
-                            break
-                    
-                    if not song_query:
-                        track_info = info.get('track') or info.get('song') or info.get('title')
-                        if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
-                            song_query = track_info
-
-            if not song_query:
-                song_query = "remix persian"
-
-            music_search_opts = {
-                'format': 'bestaudio',
-                'quiet': True,
-                'noplaylist': True,
-            }
-            with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
-                search_results = m_ydl.extract_info(f"scsearch5:{song_query}", download=False)
-                entries = search_results.get('entries', []) if search_results else []
-
-            if not entries:
-                bot.edit_message_text("❌ هیچ آهنگی با این مشخصات پیدا نشد.", call.message.chat.id, status_msg.message_id)
-                return
-
-            music_choices = load_json(MUSIC_CHOICES_FILE, {})
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            
-            for idx, entry in enumerate(entries[:5]):
-                m_title = entry.get('title', 'آهنگ ناشناخته')
-                m_url = entry.get('webpage_url')
-                choice_id = f"mc_{random.randint(10000, 99999)}"
-                music_choices[choice_id] = m_url
-                markup.add(types.InlineKeyboardButton(f"🎵 {m_title[:50]}", callback_data=choice_id))
-
-            save_json(MUSIC_CHOICES_FILE, music_choices)
-            bot.edit_message_text(f"🔍 نام جستجو شده: `{song_query}`\n\n📌 لطفاً از لیست زیر آهنگ مورد نظر خود را انتخاب کنید:", call.message.chat.id, status_msg.message_id, reply_markup=markup, parse_mode="Markdown")
-
-        except Exception as e:
-            try: bot.edit_message_text(f"❌ خطا در جستجو: {str(e)}", call.message.chat.id, status_msg.message_id)
-            except: pass
-        return
-
-    if data.startswith("mc_"):
-        music_choices = load_json(MUSIC_CHOICES_FILE, {})
-        m_url = music_choices.get(data)
-
-        if not m_url:
-            bot.answer_callback_query(call.id, "❌ این لینک منقضی شده است. مجدداً تلاش کنید.", show_alert=True)
-            return
-
-        bot.answer_callback_query(call.id, "📥 در حال دانلود و ارسال موزیک...")
-        status_msg = bot.send_message(call.message.chat.id, "📥 دانلود موزیک: 0%")
-
-        last_update_time = [0]
-        def music_progress_hook(d):
-            if d['status'] == 'downloading':
-                pct = d.get('_percent_str', '0%').strip()
-                current_time = time.time()
-                if current_time - last_update_time[0] > 1.5:
-                    last_update_time[0] = current_time
-                    try:
-                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
-                    except:
-                        pass
-
-        def download_and_send_selected_music(chat_id, music_url, msg_to_del):
-            try:
-                music_dl_opts = {
-                    'format': 'bestaudio',
-                    'outtmpl': f'{DOWNLOAD_DIR}/selected_music_%(id)s.%(ext)s',
-                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                    'quiet': True, 'noplaylist': True,
-                    'progress_hooks': [music_progress_hook]
-                }
-                final_music_path = None
-                with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
-                    info_dl = music_ydl.extract_info(music_url, download=True)
-                    final_music_path = music_ydl.prepare_filename(info_dl).rsplit('.', 1)[0] + '.mp3'
-
-                if final_music_path and os.path.exists(final_music_path):
-                    bot.edit_message_text("📤 در حال ارسال موزیک...", chat_id, msg_to_del.message_id)
-                    with open(final_music_path, 'rb') as aud:
-                        bot.send_audio(chat_id, aud, caption="🎵 موزیک انتخابی شما\n🤖 t.me/zeucdl_bot")
-                    bot.delete_message(chat_id, msg_to_del.message_id)
-                else:
-                    bot.edit_message_text("⚠️ خطا در دریافت فایل صوتی موزیک.", chat_id, msg_to_del.message_id)
-            except Exception as ex:
-                try: bot.edit_message_text(f"❌ خطا: {str(ex)}", chat_id, msg_to_del.message_id)
-                except: pass
-            finally:
-                clear_downloads()
-
-        threading.Thread(target=download_and_send_selected_music, args=(call.message.chat.id, m_url, status_msg)).start()
-        return
-
     if user_id not in admins:
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
         return
@@ -652,11 +673,6 @@ def callback_router(call):
         user_states[user_id] = "waiting_add_channel"
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "📢 آیدی کانال را بفرستید (مثل `@channel`):")
-
-    elif data == "adm_users_mgmt":
-        txt, mrk = generate_users_page(0, "")
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, reply_markup=mrk)
 
     elif data == "adm_child_bots_mgmt":
         child_bots = load_child_bots()
@@ -811,7 +827,6 @@ def handle_all_requests(message):
         bot.reply_to(message, "🤖 **این ربات با سیستم پیشرفته ساخت ربات ساخته شده است.**\n\n📌 سازنده و پشتیبان اصلی:\n@izeucs", reply_markup=get_reply_keyboard(user_id))
         return
 
-    # بررسی وضعیت اشتراک برای دکمه ساخت ربات
     if text == btn_names.get("builder", "ساخت ربات دانلودر"):
         if has_active_subscription(user_id):
             user_states[user_id] = "waiting_bot_token"
