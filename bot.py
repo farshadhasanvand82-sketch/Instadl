@@ -13,6 +13,9 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
+# آیدی کانال آرشیو برای ذخیره و ماندگاری دائمی ویدیوها
+ARCHIVE_CHANNEL = "@sheGOgpUlFVmMTRk"
+
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -257,16 +260,13 @@ def fetch_channel_web_updates():
         
         time.sleep(60)
 
+# مدیریت کلیک روی دکمه شیشه‌ای شناسایی موسیقی از طریق کانال آرشیو
 @bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
     user_id = call.from_user.id
     data = call.data
     settings = load_settings()
     admins = settings.get("admins", INITIAL_ADMINS)
-
-    if user_id not in admins and data != "check_sub":
-        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
-        return
 
     if data == "check_sub":
         if check_membership(user_id):
@@ -276,6 +276,81 @@ def callback_router(call):
             send_welcome(call.message)
         else:
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
+        return
+
+    # وقتی کاربر روی دکمه شناسایی موسیقی کلیک می‌کند
+    if data.startswith("find_music_"):
+        url = data.replace("find_music_", "")
+        bot.answer_callback_query(call.id, "🎵 در حال بررسی و استخراج موزیک ویدیو...")
+        
+        status_msg = bot.send_message(call.message.chat.id, "⏳ در حال دانلود و استخراج موزیک با متد اختصاصی...")
+        
+        def process_music_from_archive(chat_id, target_url, msg_to_del):
+            try:
+                # استخراج اطلاعات و نام آهنگ از لینک اصلی پست اینستاگرام به روش هوشمند
+                ydl_opts = {
+                    'format': 'best',
+                    'outtmpl': f'{DOWNLOAD_DIR}/archive_find_%(id)s.%(ext)s',
+                    'quiet': True
+                }
+                song_name = None
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(target_url, download=False) # فقط استخراج متادیتا برای سرعت بالا
+                    track_info = info.get('track') or info.get('song') or info.get('title')
+                    if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
+                        song_name = track_info
+                    else:
+                        caption = info.get('description') or ""
+                        lines = caption.splitlines()
+                        for line in lines:
+                            cl = line.strip()
+                            if len(cl) > 3 and not any(kw in cl.lower() for kw in ["producer", "director", "manager", "@", "album", "out now"]):
+                                song_name = cl
+                                break
+                        if not song_name and lines:
+                            for l in lines:
+                                if len(l.strip()) > 3 and "@" not in l:
+                                    song_name = l.strip()[:40]
+                                    break
+
+                if song_name:
+                    bot.send_message(chat_id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی از ساندکلود...")
+                    music_dl_opts = {
+                        'format': 'bestaudio',
+                        'outtmpl': f'{DOWNLOAD_DIR}/sc_music_%(id)s.%(ext)s',
+                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                        'quiet': True, 'noplaylist': True,
+                    }
+                    final_music_path = None
+                    with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
+                        music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
+                        if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
+                            best_match = music_info['entries'][0]
+                            if best_match and 'webpage_url' in best_match:
+                                music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
+                                final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
+                    
+                    if final_music_path and os.path.exists(final_music_path):
+                        with open(final_music_path, 'rb') as aud:
+                            bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                    else:
+                        bot.send_message(chat_id, "⚠️ فایل صوتی این موزیک در منابع یافت نشد.")
+                else:
+                    bot.send_message(chat_id, "ℹ️ نام موزیکی برای این پست یافت نشد.")
+                
+                bot.delete_message(chat_id, msg_to_del.message_id)
+            except Exception as e:
+                try: bot.edit_message_text(f"❌ خطا در پردازش موزیک: {str(e)}", chat_id, msg_to_del.message_id)
+                except: pass
+            finally:
+                clear_downloads()
+
+        threading.Thread(target=process_music_from_archive, args=(call.message.chat.id, url, status_msg)).start()
+        return
+
+    # پنل مدیریت ادمین
+    if user_id not in admins:
+        bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
         return
 
     if data == "adm_stats":
@@ -370,7 +445,7 @@ def callback_router(call):
             markup.add(types.InlineKeyboardButton(f"🤖 @{b_info['username']} | قفل: {ch_status}", callback_data=f"manage_child_{b_token}"))
         markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back"))
         bot.answer_callback_query(call.id)
-        bot.edit_message_text(f"🤖 **مدیریت ربات‌های ساخته شده:**\nروی هر ربات کلیک کنید تا قفل کانال تنظیم کنید یا آن را حذف نمایید:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text(f"🤖 **مدیریت ربات‌های ساخته شده:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif data.startswith("manage_child_"):
         b_token = data.replace("manage_child_", "")
@@ -397,28 +472,18 @@ def callback_router(call):
         child_bots = load_child_bots()
         if b_token in child_bots:
             if b_token in child_bot_instances:
-                try:
-                    child_bot_instances[b_token].stop_polling()
-                except:
-                    pass
+                try: child_bot_instances[b_token].stop_polling()
+                except: pass
                 child_bot_instances.pop(b_token, None)
-            
             del child_bots[b_token]
             save_child_bots(child_bots)
-            
-            bot.answer_callback_query(call.id, "✅ ربات با موفقیت حذف و کاملاً خاموش شد!", show_alert=True)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            for tk, inf in child_bots.items():
-                markup.add(types.InlineKeyboardButton(f"🤖 @{inf['username']}", callback_data=f"manage_child_{tk}"))
-            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back"))
-            bot.edit_message_text(f"🤖 **مدیریت ربات‌های ساخته شده:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            bot.answer_callback_query(call.id, "✅ ربات حذف شد!", show_alert=True)
+            bot.edit_message_text("🤖 **مدیریت ربات‌های ساخته شده:**", call.message.chat.id, call.message.message_id)
 
     elif data == "adm_buttons_mgmt":
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="adm_rename_btn"),
-            types.InlineKeyboardButton("🗑 حذف/پنهان کردن دکمه‌ها", callback_data="adm_delete_btn_menu"),
-            types.InlineKeyboardButton("🔀 جابجایی ترتیب دکمه‌ها", callback_data="adm_move_btn"),
             types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
         )
         bot.answer_callback_query(call.id)
@@ -436,72 +501,11 @@ def callback_router(call):
         bot.answer_callback_query(call.id)
         bot.edit_message_text("🎛 کدام دکمه ویرایش شود؟", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    elif data == "adm_delete_btn_menu":
-        order = settings.get("btn_order", ["insta", "music", "v2ray", "builder"])
-        btn_names = settings.get("btn_names", {})
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for key in order:
-            b_title = btn_names.get(key, key)
-            markup.add(types.InlineKeyboardButton(f"❌ حذف دکمه: {b_title}", callback_data=f"remove_btn_{key}"))
-        markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_buttons_mgmt"))
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("🗑 برای حذف هر دکمه از منوی اصلی، روی آن کلیک کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data.startswith("remove_btn_"):
-        btn_to_remove = data.replace("remove_btn_", "")
-        if btn_to_remove in settings["btn_order"]:
-            settings["btn_order"].remove(btn_to_remove)
-            save_settings(settings)
-            bot.answer_callback_query(call.id, "✅ دکمه با موفقیت حذف شد!", show_alert=True)
-            order = settings.get("btn_order", [])
-            btn_names = settings.get("btn_names", {})
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            for key in order:
-                b_title = btn_names.get(key, key)
-                markup.add(types.InlineKeyboardButton(f"❌ حذف دکمه: {b_title}", callback_data=f"remove_btn_{key}"))
-            markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_buttons_mgmt"))
-            bot.edit_message_text("🗑 برای حذف هر دکمه از منوی اصلی، روی آن کلیک کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
     elif data.startswith("rename_"):
         btn_key = data.replace("rename_", "")
         user_states[user_id] = f"set_name_{btn_key}"
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "✍️ نام جدید دکمه را بفرستید:")
-
-    elif data == "adm_move_btn":
-        order = settings.get("btn_order", ["insta", "music", "v2ray", "builder"])
-        user_states[user_id] = "waiting_reorder"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"🔀 ترتیب فعلی دکمه‌ها: `{' , '.join(order)}`\n\nکلیدهای موجود: `insta`, `music`, `v2ray`, `builder`\nترتیب جدید را با فاصله یا کاما بفرستید:")
-
-    elif data == "adm_pro_menu":
-        sources = ", ".join(settings.get("pro_sources", [])) or "تنظیم نشده"
-        dest = settings.get("pro_dest") or "تنظیم نشده"
-        pname = settings.get("pro_name", "VIP Server")
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("📥 تنظیم کانال(های) مبدأ", callback_data="pro_set_source"),
-            types.InlineKeyboardButton("📤 تنظیم کانال مقصد", callback_data="pro_set_dest"),
-            types.InlineKeyboardButton("🏷 تغییر نام پیش‌فرض سرورها", callback_data="pro_set_name"),
-            types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
-        )
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(f"⚡️ **بخش مدیریت حرفه‌ای (اطلاعات سرور):**\n\n📥 مبدأ(ها): `{sources}`\n📤 مقصد: `{dest}`\n🏷 نام جدید سرورها: `{pname}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "pro_set_source":
-        user_states[user_id] = "waiting_pro_source"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📥 آیدی کانال‌های مبدأ را با کاما یا فاصله بفرستید (مثل `@source1, @source2`):")
-
-    elif data == "pro_set_dest":
-        user_states[user_id] = "waiting_pro_dest"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید (مثل `@mychannel`):")
-
-    elif data == "pro_set_name":
-        user_states[user_id] = "waiting_pro_name"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🏷 نام جدید و دلخواهی که باید روی سرورها ثبت شود را بفرستید:")
 
     elif data == "adm_back":
         if user_id not in admins: return
@@ -513,16 +517,9 @@ def callback_router(call):
             types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
             types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
             types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
-            types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
-            types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
-            types.InlineKeyboardButton("⚡️ اطلاعات سرور", callback_data="adm_pro_menu")
+            types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
         )
         bot.edit_message_text("🛠 **پنل مدیریت پیشرفته ربات:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif data == "adm_rename_servers":
-        user_states[user_id] = "waiting_servers_for_rename"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🏷 لطفاً **لیست سرورهای V2Ray** (کانفیگ‌ها) را به صورت متن یا فایل بفرستید:")
 
 @bot.message_handler(content_types=['text', 'document'])
 def handle_all_requests(message):
@@ -538,9 +535,6 @@ def handle_all_requests(message):
 
     if channels and user_id not in admins and not check_membership(user_id):
         bot.reply_to(message, "⚠️ لطفا ابتدا در کانال‌های ربات عضو شوید.")
-        return
-    if channels and user_id in admins and is_guest and not check_membership(user_id):
-        bot.reply_to(message, "⚠️ [حالت تست مهمان] شما به عنوان کاربر عادی باید در کانال عضو باشید. برای خروج /start را بزنید.")
         return
 
     text = ""
@@ -558,67 +552,6 @@ def handle_all_requests(message):
     btn_names = settings.get("btn_names", {})
 
     if user_id in admins and not is_guest:
-        if current_state == "waiting_pro_source":
-            sources = [x.strip() for x in text.replace(",", " ").split() if x.strip()]
-            settings["pro_sources"] = sources
-            save_settings(settings)
-            bot.reply_to(message, f"✅ کانال‌های مبدأ ثبت شدند: {sources}", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_pro_dest":
-            dest = text if text.startswith("@") else "@" + text
-            settings["pro_dest"] = dest
-            save_settings(settings)
-            bot.reply_to(message, f"✅ کانال مقصد ثبت شد: {dest}", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_pro_name":
-            settings["pro_name"] = text
-            save_settings(settings)
-            bot.reply_to(message, f"✅ نام پیش‌فرض جدید سرورها تنظیم شد روی: `{text}`", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        if current_state == "waiting_servers_for_rename":
-            rename_temp_data[user_id] = text
-            user_states[user_id] = "waiting_new_server_name"
-            bot.reply_to(message, "✅ سرورها دریافت شدند.\n\n✍️ حالا **نام جدیدی** که می‌خواهید روی تمامی سرورها اعمال شود را ارسال کنید:")
-            return
-
-        elif current_state == "waiting_new_server_name":
-            new_name = text.strip()
-            raw_configs = rename_temp_data.get(user_id, "")
-            
-            lines = [line.strip() for line in raw_configs.splitlines() if line.strip()]
-            updated_lines = []
-            
-            import urllib.parse
-            for config in lines:
-                if "#" in config:
-                    base_cfg = config.rsplit("#", 1)[0]
-                    encoded_name = urllib.parse.quote(new_name)
-                    updated_lines.append(f"{base_cfg}#{encoded_name}")
-                else:
-                    encoded_name = urllib.parse.quote(new_name)
-                    updated_lines.append(f"{config}#{encoded_name}")
-
-            if updated_lines:
-                bot.reply_to(message, f"🚀 در حال ارسال {len(updated_lines)} سرور با نام جدید...", reply_markup=get_reply_keyboard(user_id))
-                for cfg in updated_lines:
-                    try:
-                        bot.send_message(message.chat.id, f"`{cfg}`", parse_mode="Markdown")
-                    except:
-                        bot.send_message(message.chat.id, cfg)
-                bot.send_message(message.chat.id, "✅ تمامی سرورها با موفقیت ارسال شدند!", reply_markup=get_reply_keyboard(user_id))
-            else:
-                bot.reply_to(message, "❌ هیچ کانفیگ معتبری یافت نشد.", reply_markup=get_reply_keyboard(user_id))
-
-            user_states.pop(user_id, None)
-            rename_temp_data.pop(user_id, None)
-            return
-
         if text == "⚙️ پنل مدیریت پیشرفته":
             markup = types.InlineKeyboardMarkup(row_width=2)
             markup.add(
@@ -627,90 +560,9 @@ def handle_all_requests(message):
                 types.InlineKeyboardButton("📢 مدیریت کانال‌های قفل", callback_data="adm_channels_mgmt"),
                 types.InlineKeyboardButton("👥 مدیریت کاربران و ادمین‌ها", callback_data="adm_users_mgmt"),
                 types.InlineKeyboardButton("🤖 مدیریت ربات‌های ساخته شده", callback_data="adm_child_bots_mgmt"),
-                types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt"),
-                types.InlineKeyboardButton("🏷 تغییر نام سرور", callback_data="adm_rename_servers"),
-                types.InlineKeyboardButton("⚡️ اطلاعات سرور", callback_data="adm_pro_menu"),
-                types.InlineKeyboardButton("🕵️‍♂️ ورود به حالت تست مهمان", callback_data="dummy_guest")
+                types.InlineKeyboardButton("🎛 مدیریت دکمه‌ها", callback_data="adm_buttons_mgmt")
             )
             bot.reply_to(message, "🛠 **پنل مدیریت پیشرفته ربات:**", reply_markup=markup)
-            return
-
-        if text == "🕵️‍♂️ ورود به حالت تست مهمان" or text == "/guest":
-            user_states[user_id] = "guest_mode"
-            bot.reply_to(message, "🕵️‍♂️ **شما وارد حالت تست مهمان شدید!**\nبرای خروج و بازگشت به پنل مدیریت، `/start` را بفرستید.", reply_markup=get_reply_keyboard(user_id))
-            return
-
-        if current_state == "waiting_main_broadcast":
-            for uid in load_users().keys():
-                try: bot.send_message(int(uid), text)
-                except: pass
-            bot.reply_to(message, "✅ پیام همگانی به کاربران ربات اصلی ارسال شد.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state and current_state.startswith("waiting_child_ch_"):
-            b_token = current_state.replace("waiting_child_ch_", "")
-            child_bots = load_child_bots()
-            if b_token in child_bots:
-                if text.lower() == "off":
-                    child_bots[b_token]["channel"] = ""
-                    bot.reply_to(message, "✅ قفل کانال این ربات غیرفعال شد.", reply_markup=get_reply_keyboard(user_id))
-                else:
-                    ch = text if text.startswith("@") else "@" + text
-                    child_bots[b_token]["channel"] = ch
-                    bot.reply_to(message, f"✅ کانال قفل این ربات روی `{ch}` تنظیم شد.", reply_markup=get_reply_keyboard(user_id))
-                save_child_bots(child_bots)
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_add_channel":
-            ch = text if text.startswith("@") else "@" + text
-            if ch not in settings["channels"]:
-                settings["channels"].append(ch)
-                save_settings(settings)
-                bot.reply_to(message, f"✅ کانال {ch} افزوده شد.", reply_markup=get_reply_keyboard(user_id))
-            else: bot.reply_to(message, "⚠️ کانال از قبل وجود دارد.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_ban_input":
-            try:
-                target = str(int(text))
-                users = load_users()
-                if target in users:
-                    users[target]["banned"] = not users[target].get("banned", False)
-                    save_json(USERS_FILE, users)
-                    st = "مسدود 🚫" if users[target]["banned"] else "آزاد ✅"
-                    bot.reply_to(message, f"کاربر {target} {st}", reply_markup=get_reply_keyboard(user_id))
-                else: bot.reply_to(message, "❌ کاربر یافت نشد.", reply_markup=get_reply_keyboard(user_id))
-            except: bot.reply_to(message, "❌ آیدی نامعتبر.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_user_msg_id":
-            user_states[user_id] = f"send_msg_to_{text}"
-            bot.reply_to(message, "💬 متنی که می‌خواهید به این کاربر ارسال کنید را بفرستید:")
-            return
-
-        elif current_state and current_state.startswith("send_msg_to_"):
-            target_id = current_state.replace("send_msg_to_", "")
-            try:
-                bot.send_message(int(target_id), f"📩 پیام از طرف مدیریت:\n\n{text}")
-                bot.reply_to(message, "✅ پیام ارسال شد.", reply_markup=get_reply_keyboard(user_id))
-            except: bot.reply_to(message, "❌ ارسال پیام ناموفق بود.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-        elif current_state == "waiting_new_admin_id":
-            try:
-                new_adm = int(text)
-                if new_adm not in settings["admins"]:
-                    settings["admins"].append(new_adm)
-                    save_settings(settings)
-                    bot.reply_to(message, f"✅ ادمین جدید با آیدی {new_adm} افزوده شد.", reply_markup=get_reply_keyboard(user_id))
-                else: bot.reply_to(message, "⚠️ کاربر از قبل ادمین است.", reply_markup=get_reply_keyboard(user_id))
-            except: bot.reply_to(message, "❌ آیدی نامعتبر.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
             return
 
         elif current_state and current_state.startswith("set_name_"):
@@ -720,19 +572,6 @@ def handle_all_requests(message):
             bot.reply_to(message, f"✅ نام دکمه تغییر کرد!", reply_markup=get_reply_keyboard(user_id))
             user_states.pop(user_id, None)
             return
-
-        elif current_state == "waiting_reorder":
-            new_order = [x.strip() for x in text.replace(",", " ").split() if x.strip() in ["insta", "music", "v2ray", "builder"]]
-            if len(new_order) > 0:
-                settings["btn_order"] = new_order
-                save_settings(settings)
-                bot.reply_to(message, f"✅ ترتیب دکمه‌ها بروز شد.", reply_markup=get_reply_keyboard(user_id))
-            else: bot.reply_to(message, "❌ کلیدها نامعتبرند.", reply_markup=get_reply_keyboard(user_id))
-            user_states.pop(user_id, None)
-            return
-
-    if text == "/start" and user_id in admins:
-        user_states.pop(user_id, None)
 
     if text == "👨‍💻 سازنده" or text == "سازنده":
         bot.reply_to(message, "🤖 **این ربات با سیستم پیشرفته ساخت ربات ساخته شده است.**\n\n📌 سازنده و پشتیبان اصلی:\n@izeucs", reply_markup=get_reply_keyboard(user_id))
@@ -800,9 +639,9 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # تابع پس‌زمینه فوق‌العاده سریع و امن برای استخراج اطلاعات و موزیک از متادیتا و کپشن
+    # تابع پس‌زمینه برای دانلود و ارسال به کانال آرشیو همراه با دکمه‌های شیشه‌ای
     def process_instagram_link(chat_id, url, user_st_key):
-        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود و استخراج ویدیو و موزیک...")
+        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود ویدیو و ارسال به آرشیو...")
         try:
             ydl_opts = {
                 'format': 'best',
@@ -811,7 +650,6 @@ def handle_all_requests(message):
             }
             
             video_file_path = None
-            song_name = None
             caption = "بدون کپشن"
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -821,52 +659,24 @@ def handle_all_requests(message):
                 if not os.path.exists(video_file_path):
                     video_file_path = base_path + '.mkv'
                 caption = info.get('description') or "بدون کپشن"
-                
-                # استخراج هوشمند نام موزیک از متادیتای اینستاگرام یا خطوط اول کپشن
-                track_info = info.get('track') or info.get('song') or info.get('title')
-                if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
-                    song_name = track_info
-                else:
-                    # اگر متادیتا نداشت، از خط اول کپشن یا هشتگ‌های موزیک استفاده کن
-                    lines = caption.splitlines()
-                    for line in lines:
-                        if "music" in line.lower() or "آهنگ" in line or "🎵" in line or "beat" in line.lower():
-                            song_name = line.replace("🎵", "").strip()
-                            break
-                    if not song_name and lines:
-                        song_name = lines[0][:40] # استفاده از اولین خط کپشن به عنوان کلید جستجو
 
             if video_file_path and os.path.exists(video_file_path):
-                with open(video_file_path, 'rb') as vid:
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url))
-                    bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("🎵 شناسایی موسیقی", callback_data=f"find_music_{url}"),
+                    types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url)
+                )
 
-                # جستجوی سریع و بدون معطلی موزیک در ساندکلود
-                if song_name:
-                    bot.send_message(chat_id, f"🎵 **نام موزیک استخراج شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
-                    audio_dl_opts = {
-                        'format': 'bestaudio',
-                        'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
-                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                        'quiet': True, 'noplaylist': True,
-                    }
-                    final_music_path = None
-                    with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
-                        music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
-                        if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
-                            best_match = music_info['entries'][0]
-                            if best_match and 'webpage_url' in best_match:
-                                music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
-                                final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
-                    
-                    if final_music_path and os.path.exists(final_music_path):
-                        with open(final_music_path, 'rb') as aud:
-                            bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
-                    else:
-                        bot.send_message(chat_id, "⚠️ فایل صوتی این موزیک در منابع یافت نشد.")
-                else:
-                    bot.send_message(chat_id, "ℹ️ نام موزیکی برای این پست یافت نشد.")
+                # ارسال به کانال آرشیو برای ماندگاری دائمی
+                try:
+                    with open(video_file_path, 'rb') as vid:
+                        bot.send_video(ARCHIVE_CHANNEL, vid, caption=f"✅ ویدیو آرشیو شده.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
+                except Exception as ch_err:
+                    print(f"Archive channel error: {ch_err}")
+
+                # ارسال ویدیو به کاربر
+                with open(video_file_path, 'rb') as vid:
+                    bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
                 bot.delete_message(chat_id, status_msg.message_id)
         except Exception as e:
