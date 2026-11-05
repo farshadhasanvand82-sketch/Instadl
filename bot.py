@@ -7,7 +7,6 @@ import random
 import base64
 import telebot
 import yt_dlp
-import requests
 from flask import Flask
 from telebot import types
 
@@ -497,7 +496,7 @@ def callback_router(call):
     elif data == "pro_set_dest":
         user_states[user_id] = "waiting_pro_dest"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید مثل `@mychannel`:")
+        bot.send_message(call.message.chat.id, "📤 آیدی کانال مقصد را بفرستید (مثل `@mychannel`):")
 
     elif data == "pro_set_name":
         user_states[user_id] = "waiting_pro_name"
@@ -801,19 +800,17 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # تابع پس‌زمینه برای پردازش کامل بدون معطلی ربات
+    # تابع پس‌زمینه فوق‌العاده سریع و امن برای استخراج اطلاعات و موزیک از متادیتا و کپشن
     def process_instagram_link(chat_id, url, user_st_key):
-        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود و پردازش ویدیو...")
+        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود و استخراج ویدیو و موزیک...")
         try:
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
-                'quiet': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}]
+                'quiet': True
             }
             
             video_file_path = None
-            audio_file_path = None
             song_name = None
             caption = "بدون کپشن"
 
@@ -821,8 +818,23 @@ def handle_all_requests(message):
                 info = ydl.extract_info(url, download=True)
                 base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
                 video_file_path = base_path + '.mp4'
-                audio_file_path = base_path + '.mp3'
+                if not os.path.exists(video_file_path):
+                    video_file_path = base_path + '.mkv'
                 caption = info.get('description') or "بدون کپشن"
+                
+                # استخراج هوشمند نام موزیک از متادیتای اینستاگرام یا خطوط اول کپشن
+                track_info = info.get('track') or info.get('song') or info.get('title')
+                if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
+                    song_name = track_info
+                else:
+                    # اگر متادیتا نداشت، از خط اول کپشن یا هشتگ‌های موزیک استفاده کن
+                    lines = caption.splitlines()
+                    for line in lines:
+                        if "music" in line.lower() or "آهنگ" in line or "🎵" in line or "beat" in line.lower():
+                            song_name = line.replace("🎵", "").strip()
+                            break
+                    if not song_name and lines:
+                        song_name = lines[0][:40] # استفاده از اولین خط کپشن به عنوان کلید جستجو
 
             if video_file_path and os.path.exists(video_file_path):
                 with open(video_file_path, 'rb') as vid:
@@ -830,48 +842,31 @@ def handle_all_requests(message):
                     markup.add(types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url))
                     bot.send_video(chat_id, vid, caption=f"✅ ویدیو دانلود شد.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
 
-                # تلاش برای تشخیص موزیک با سرویس صوتی
-                if audio_file_path and os.path.exists(audio_file_path):
-                    try:
-                        with open(audio_file_path, 'rb') as f_audio:
-                            files = {'file': f_audio.read()}
-                            res = requests.post('https://api.audd.io/', data={'api_token': 'test', 'return': 'apple_music,spotify'}, files=files, timeout=10)
-                            res_json = res.json()
-                            if res_json.get('status') == 'success' and res_json.get('result'):
-                                track = res_json['result']
-                                song_name = f"{track.get('artist')} - {track.get('title')}"
-                    except:
-                        pass
-
-                    if not song_name and 'info' in locals():
-                        t_info = info.get('track') or info.get('song') or info.get('title')
-                        if t_info and isinstance(t_info, str) and not t_info.lower().startswith("video by"):
-                            song_name = t_info
-
-                    if song_name:
-                        bot.send_message(chat_id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
-                        audio_dl_opts = {
-                            'format': 'bestaudio',
-                            'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
-                            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                            'quiet': True, 'noplaylist': True,
-                        }
-                        final_music_path = None
-                        with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
-                            music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
-                            if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
-                                best_match = music_info['entries'][0]
-                                if best_match and 'webpage_url' in best_match:
-                                    music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
-                                    final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
-                        
-                        if final_music_path and os.path.exists(final_music_path):
-                            with open(final_music_path, 'rb') as aud:
-                                bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
-                        else:
-                            bot.send_message(chat_id, "⚠️ موزیک شناسایی شد اما فایل صوتی آن یافت نشد.")
+                # جستجوی سریع و بدون معطلی موزیک در ساندکلود
+                if song_name:
+                    bot.send_message(chat_id, f"🎵 **نام موزیک استخراج شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی...")
+                    audio_dl_opts = {
+                        'format': 'bestaudio',
+                        'outtmpl': f'{DOWNLOAD_DIR}/music_%(id)s.%(ext)s',
+                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+                        'quiet': True, 'noplaylist': True,
+                    }
+                    final_music_path = None
+                    with yt_dlp.YoutubeDL(audio_dl_opts) as music_ydl:
+                        music_info = music_ydl.extract_info(f"scsearch:{song_name}", download=False)
+                        if music_info and 'entries' in music_info and len(music_info['entries']) > 0:
+                            best_match = music_info['entries'][0]
+                            if best_match and 'webpage_url' in best_match:
+                                music_info_dl = music_ydl.extract_info(best_match['webpage_url'], download=True)
+                                final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
+                    
+                    if final_music_path and os.path.exists(final_music_path):
+                        with open(final_music_path, 'rb') as aud:
+                            bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
                     else:
-                        bot.send_message(chat_id, "ℹ️ موزیکی روی این ویدیو شناسایی نشد.")
+                        bot.send_message(chat_id, "⚠️ فایل صوتی این موزیک در منابع یافت نشد.")
+                else:
+                    bot.send_message(chat_id, "ℹ️ نام موزیکی برای این پست یافت نشد.")
 
                 bot.delete_message(chat_id, status_msg.message_id)
         except Exception as e:
