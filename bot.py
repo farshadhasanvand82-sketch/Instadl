@@ -13,7 +13,6 @@ from telebot import types
 BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
-# آیدی کانال آرشیو برای ذخیره و ماندگاری دائمی ویدیوها
 ARCHIVE_CHANNEL = "@sheGOgpUlFVmMTRk"
 
 DATA_DIR = "/data" if os.path.exists("/data") else "."
@@ -21,6 +20,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users_data.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 BOTS_FILE = os.path.join(DATA_DIR, "child_bots.json")
 PRO_STATE_FILE = os.path.join(DATA_DIR, "pro_state.json")
+POSTS_CACHE_FILE = os.path.join(DATA_DIR, "posts_cache.json")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 DOWNLOAD_DIR = "downloads"
@@ -260,7 +260,7 @@ def fetch_channel_web_updates():
         
         time.sleep(60)
 
-# مدیریت کلیک روی دکمه شیشه‌ای شناسایی موسیقی از طریق کانال آرشیو
+# مدیریت کلیک روی دکمه شیشه‌ای شناسایی موسیقی
 @bot.callback_query_handler(func=lambda call: True)
 def callback_router(call):
     user_id = call.from_user.id
@@ -278,24 +278,36 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # وقتی کاربر روی دکمه شناسایی موسیقی کلیک می‌کند
     if data.startswith("find_music_"):
-        url = data.replace("find_music_", "")
-        bot.answer_callback_query(call.id, "🎵 در حال بررسی و استخراج موزیک ویدیو...")
+        post_key = data.replace("find_music_", "")
+        posts_cache = load_json(POSTS_CACHE_FILE, {})
+        target_url = posts_cache.get(post_key)
+
+        if not target_url:
+            bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id, "🎵 در حال جستجوی موزیک...")
+        status_msg = bot.send_message(call.message.chat.id, "📥 دانلود موزیک: 0%")
         
-        status_msg = bot.send_message(call.message.chat.id, "⏳ در حال دانلود و استخراج موزیک با متد اختصاصی...")
-        
-        def process_music_from_archive(chat_id, target_url, msg_to_del):
+        last_update_time = [0]
+        def music_progress_hook(d):
+            if d['status'] == 'downloading':
+                pct = d.get('_percent_str', '0%').strip()
+                current_time = time.time()
+                if current_time - last_update_time[0] > 1.5:
+                    last_update_time[0] = current_time
+                    try:
+                        bot.edit_message_text(f"📥 دانلود موزیک: {pct}", call.message.chat.id, status_msg.message_id)
+                    except:
+                        pass
+
+        def process_music_from_cache(chat_id, url, msg_to_del):
             try:
-                # استخراج اطلاعات و نام آهنگ از لینک اصلی پست اینستاگرام به روش هوشمند
-                ydl_opts = {
-                    'format': 'best',
-                    'outtmpl': f'{DOWNLOAD_DIR}/archive_find_%(id)s.%(ext)s',
-                    'quiet': True
-                }
+                ydl_opts = {'format': 'best', 'quiet': True}
                 song_name = None
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(target_url, download=False) # فقط استخراج متادیتا برای سرعت بالا
+                    info = ydl.extract_info(url, download=False)
                     track_info = info.get('track') or info.get('song') or info.get('title')
                     if track_info and isinstance(track_info, str) and not track_info.lower().startswith("video by"):
                         song_name = track_info
@@ -304,7 +316,7 @@ def callback_router(call):
                         lines = caption.splitlines()
                         for line in lines:
                             cl = line.strip()
-                            if len(cl) > 3 and not any(kw in cl.lower() for kw in ["producer", "director", "manager", "@", "album", "out now"]):
+                            if len(cl) > 3 and not any(kw in cl.lower() for kw in ["producer", "director", "manager", "@", "album"]):
                                 song_name = cl
                                 break
                         if not song_name and lines:
@@ -314,12 +326,12 @@ def callback_router(call):
                                     break
 
                 if song_name:
-                    bot.send_message(chat_id, f"🎵 **موزیک شناسایی شده:** `{song_name}`\n⏳ در حال دریافت فایل صوتی از ساندکلود...")
                     music_dl_opts = {
                         'format': 'bestaudio',
                         'outtmpl': f'{DOWNLOAD_DIR}/sc_music_%(id)s.%(ext)s',
                         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
                         'quiet': True, 'noplaylist': True,
+                        'progress_hooks': [music_progress_hook]
                     }
                     final_music_path = None
                     with yt_dlp.YoutubeDL(music_dl_opts) as music_ydl:
@@ -331,28 +343,28 @@ def callback_router(call):
                                 final_music_path = music_ydl.prepare_filename(music_info_dl).rsplit('.', 1)[0] + '.mp3'
                     
                     if final_music_path and os.path.exists(final_music_path):
+                        bot.edit_message_text("📤 در حال ارسال موزیک...", chat_id, msg_to_del.message_id)
                         with open(final_music_path, 'rb') as aud:
                             bot.send_audio(chat_id, aud, caption=f"🎵 موزیک پست اینستاگرام: {song_name}\n🤖 t.me/zeucdl_bot")
+                        bot.delete_message(chat_id, msg_to_del.message_id)
                     else:
-                        bot.send_message(chat_id, "⚠️ فایل صوتی این موزیک در منابع یافت نشد.")
+                        bot.edit_message_text("⚠️ فایل صوتی این موزیک یافت نشد.", chat_id, msg_to_del.message_id)
                 else:
-                    bot.send_message(chat_id, "ℹ️ نام موزیکی برای این پست یافت نشد.")
-                
-                bot.delete_message(chat_id, msg_to_del.message_id)
+                    bot.edit_message_text("ℹ️ نام موزیکی برای این پست یافت نشد.", chat_id, msg_to_del.message_id)
             except Exception as e:
-                try: bot.edit_message_text(f"❌ خطا در پردازش موزیک: {str(e)}", chat_id, msg_to_del.message_id)
+                try: bot.edit_message_text(f"❌ خطا: {str(e)}", chat_id, msg_to_del.message_id)
                 except: pass
             finally:
                 clear_downloads()
 
-        threading.Thread(target=process_music_from_archive, args=(call.message.chat.id, url, status_msg)).start()
+        threading.Thread(target=process_music_from_cache, args=(call.message.chat.id, target_url, status_msg)).start()
         return
 
-    # پنل مدیریت ادمین
     if user_id not in admins:
         bot.answer_callback_query(call.id, "❌ دسترسی غیرمجاز!", show_alert=True)
         return
 
+    # پنل مدیریت ادمین
     if data == "adm_stats":
         users = load_users()
         child_bots = load_child_bots()
@@ -639,14 +651,28 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # تابع پس‌زمینه برای دانلود و ارسال به کانال آرشیو همراه با دکمه‌های شیشه‌ای
+    # تابع پس‌زمینه با نمایش زنده درصد دانلود و آپلود بدون حواشی اضافی
     def process_instagram_link(chat_id, url, user_st_key):
-        status_msg = bot.send_message(chat_id, "⏳ در حال دانلود ویدیو و ارسال به آرشیو...")
+        status_msg = bot.send_message(chat_id, "📥 دانلود ویدیو: 0%")
+        
+        last_update_time = [0]
+        def download_progress_hook(d):
+            if d['status'] == 'downloading':
+                pct = d.get('_percent_str', '0%').strip()
+                current_time = time.time()
+                if current_time - last_update_time[0] > 1.5:
+                    last_update_time[0] = current_time
+                    try:
+                        bot.edit_message_text(f"📥 دانلود ویدیو: {pct}", chat_id, status_msg.message_id)
+                    except:
+                        pass
+
         try:
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': f'{DOWNLOAD_DIR}/t.me_zeucdl_bot_%(id)s.%(ext)s',
-                'quiet': True
+                'quiet': True,
+                'progress_hooks': [download_progress_hook]
             }
             
             video_file_path = None
@@ -661,13 +687,22 @@ def handle_all_requests(message):
                 caption = info.get('description') or "بدون کپشن"
 
             if video_file_path and os.path.exists(video_file_path):
+                post_key = str(abs(hash(url)))
+                posts_cache = load_json(POSTS_CACHE_FILE, {})
+                posts_cache[post_key] = url
+                if len(posts_cache) > 200:
+                    posts_cache.pop(list(posts_cache.keys())[0])
+                save_json(POSTS_CACHE_FILE, posts_cache)
+
                 markup = types.InlineKeyboardMarkup(row_width=1)
                 markup.add(
-                    types.InlineKeyboardButton("🎵 شناسایی موسیقی", callback_data=f"find_music_{url}"),
+                    types.InlineKeyboardButton("🎵 شناسایی موسیقی", callback_data=f"find_music_{post_key}"),
                     types.InlineKeyboardButton("🔗 اشتراک‌گذاری پست", url=url)
                 )
 
-                # ارسال به کانال آرشیو برای ماندگاری دائمی
+                bot.edit_message_text("📤 در حال ارسال به آرشیو و کاربر...", chat_id, status_msg.message_id)
+
+                # ارسال به کانال آرشیو
                 try:
                     with open(video_file_path, 'rb') as vid:
                         bot.send_video(ARCHIVE_CHANNEL, vid, caption=f"✅ ویدیو آرشیو شده.\n\n{caption[:600]}\n\n🤖 t.me/zeucdl_bot", reply_markup=markup)
@@ -680,7 +715,7 @@ def handle_all_requests(message):
 
                 bot.delete_message(chat_id, status_msg.message_id)
         except Exception as e:
-            try: bot.edit_message_text(f"❌ خطا در پردازش: {str(e)}", chat_id, status_msg.message_id)
+            try: bot.edit_message_text(f"❌ خطا: {str(e)}", chat_id, status_msg.message_id)
             except: pass
         finally:
             user_states.pop(user_st_key, None)
@@ -776,19 +811,26 @@ def run_child_bot(token):
             elif txt == "🎵 دانلود موزیک":
                 c_bot.reply_to(msg, "لینک آهنگ را بفرستید:")
             elif txt.startswith("http://") or txt.startswith("https://"):
-                status = c_bot.reply_to(msg, "⏳ در حال پردازش و دانلود...")
+                status = c_bot.reply_to(msg, "📥 دانلود ویدیو: 0%")
                 try:
-                    ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/child_%(id)s.%(ext)s', 'quiet': True}
+                    def child_dl_hook(d):
+                        if d['status'] == 'downloading':
+                            pct = d.get('_percent_str', '0%').strip()
+                            try: c_bot.edit_message_text(f"📥 دانلود ویدیو: {pct}", msg.chat.id, status.message_id)
+                            except: pass
+
+                    ydl_opts = {'format': 'best', 'outtmpl': f'{DOWNLOAD_DIR}/child_%(id)s.%(ext)s', 'quiet': True, 'progress_hooks': [child_dl_hook]}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(txt, download=True)
                         f_path = ydl.prepare_filename(info)
                         if not os.path.exists(f_path): f_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
                     if os.path.exists(f_path):
+                        c_bot.edit_message_text("📤 در حال ارسال...", msg.chat.id, status.message_id)
                         with open(f_path, 'rb') as f_vid:
                             c_bot.send_video(msg.chat.id, f_vid, caption="✅ دانلود انجام شد.")
                         c_bot.delete_message(msg.chat.id, status.message_id)
                 except Exception as e:
-                    c_bot.edit_message_text(f"❌ خطا در دانلود: {str(e)}", msg.chat.id, status.message_id)
+                    c_bot.edit_message_text(f"❌ خطا: {str(e)}", msg.chat.id, status.message_id)
             else:
                 c_bot.reply_to(msg, "لطفاً یک لینک معتبر ارسال کنید.")
 
