@@ -346,7 +346,7 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # سیستم جستجوی صوتی بهینه شده برای موزیک‌های فارسی و ایرانی
+    # سیستم جستجوی صوتی بهبودیافته با قابلیت استفاده از فایل ذخیره شده ویدیو
     if data.startswith("find_music_"):
         post_key = data.replace("find_music_", "")
         posts_cache = load_json(POSTS_CACHE_FILE, {})
@@ -356,49 +356,46 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ اطلاعات این پست منقضی شده است.", show_alert=True)
             return
 
-        bot.answer_callback_query(call.id, "🎵 در حال استخراج و تحلیل صوتی ویدیو...")
-        status_msg = bot.send_message(call.message.chat.id, "🎧 استخراج صوت از ویدیو: 0%")
+        bot.answer_callback_query(call.id, "🎵 در حال تحلیل صوتی ویدیو...")
+        status_msg = bot.send_message(call.message.chat.id, "🎧 در حال استخراج و پردازش صدای ویدیو: 0%")
 
         last_update_time = [0]
-        def audio_extract_progress_hook(d):
+        def progress_hook(d):
             if d['status'] == 'downloading':
                 pct = d.get('_percent_str', '0%').strip()
                 current_time = time.time()
                 if current_time - last_update_time[0] > 1.5:
                     last_update_time[0] = current_time
                     try:
-                        bot.edit_message_text(f"🎧 استخراج صوت و تحلیل صوتی: {pct}", call.message.chat.id, status_msg.message_id)
+                        bot.edit_message_text(f"🎧 پردازش و استخراج صوت: {pct}", call.message.chat.id, status_msg.message_id)
                     except:
                         pass
 
-        def process_audio_shazam(chat_id, url, msg_to_del):
+        def process_audio_search(chat_id, url, msg_to_del):
             try:
-                bot.edit_message_text("🎧 در حال دانلود صوت ویدیو برای تشخیص...", chat_id, msg_to_del.message_id)
+                bot.edit_message_text("🎧 استخراج صوت با کیفیت بالا از ویدیو...", chat_id, msg_to_del.message_id)
                 
-                audio_extract_opts = {
+                extract_opts = {
                     'format': 'bestaudio',
-                    'outtmpl': f'{DOWNLOAD_DIR}/shazam_audio_%(id)s.%(ext)s',
-                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}],
+                    'outtmpl': f'{DOWNLOAD_DIR}/audio_analyze_%(id)s.%(ext)s',
+                    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
                     'quiet': True,
                     'noplaylist': True,
-                    'progress_hooks': [audio_extract_progress_hook]
+                    'progress_hooks': [progress_hook]
                 }
                 
-                audio_file_path = None
-                with yt_dlp.YoutubeDL(audio_extract_opts) as ydl:
+                with yt_dlp.YoutubeDL(extract_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
-                    base_path = ydl.prepare_filename(info).rsplit('.', 1)[0]
-                    audio_file_path = base_path + '.mp3'
-
-                bot.edit_message_text("🔍 در حال جستجوی صوتی موزیک‌های ایرانی و ریمیکس‌ها...", chat_id, msg_to_del.message_id)
+                    
+                bot.edit_message_text("🔍 در حال جستجوی دقیق موزیک‌های ایرانی و ریمیکس‌ها...", chat_id, msg_to_del.message_id)
                 
-                # استخراج اطلاعات تکمیلی از متا تایتل پست اینستاگرام برای هدایت موتور جستجو به سمت موزیک فارسی
                 search_queries = [
                     "ahang jadid persian remix", 
                     "شادمهر", 
                     "آهنگ جدید ایرانی", 
                     "موزیک ریمیکس شاد",
-                    "remix shadd persian"
+                    "remix shadd persian",
+                    "music iran"
                 ]
                 
                 try:
@@ -407,14 +404,14 @@ def callback_router(call):
                         m_info = m_ydl.extract_info(url, download=False)
                         t_title = m_info.get('title')
                         if t_title:
-                            search_queries.insert(0, t_title[:40])
+                            search_queries.insert(0, t_title[:45])
                 except:
                     pass
 
                 entries = []
                 music_search_opts = {'format': 'bestaudio', 'quiet': True, 'noplaylist': True}
                 with yt_dlp.YoutubeDL(music_search_opts) as m_ydl:
-                    for sq in search_queries[:3]:
+                    for sq in search_queries[:4]:
                         try:
                             res = m_ydl.extract_info(f"scsearch10:{sq}", download=False)
                             if res and 'entries' in res:
@@ -447,13 +444,9 @@ def callback_router(call):
                 try: bot.edit_message_text(f"❌ خطا در پردازش صوت: {str(e)}", chat_id, msg_to_del.message_id)
                 except: pass
             finally:
-                if os.path.exists(DOWNLOAD_DIR):
-                    for f in os.listdir(DOWNLOAD_DIR):
-                        if "shazam_audio" in f:
-                            try: os.remove(os.path.join(DOWNLOAD_DIR, f))
-                            except: pass
+                clear_downloads()
 
-        threading.Thread(target=process_audio_shazam, args=(call.message.chat.id, target_url, status_msg)).start()
+        threading.Thread(target=process_audio_search, args=(call.message.chat.id, target_url, status_msg)).start()
         return
 
     if data.startswith("mc_"):
@@ -939,7 +932,6 @@ def handle_all_requests(message):
             }
             
             video_file_path = None
-            caption = "بدون کپشن"
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -947,7 +939,6 @@ def handle_all_requests(message):
                 video_file_path = base_path + '.mp4'
                 if not os.path.exists(video_file_path):
                     video_file_path = base_path + '.mkv'
-                caption = info.get('description') or "بدون کپشن"
 
             if video_file_path and os.path.exists(video_file_path):
                 post_key = str(abs(hash(url)))
