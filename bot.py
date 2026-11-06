@@ -11,7 +11,7 @@ import yt_dlp
 from flask import Flask
 from telebot import types
 
-BOT_TOKEN = "8948057491:AAGcZ6DH_gPhSOPqcAPz7XU-PM391_mJ0Ns"
+BOT_TOKEN = "8948057491:AAFPWgwOdHjsNaVGOhW1Dye9ssSBgwTlk9o"
 INITIAL_ADMINS = [8886868325, 8250289921]
 
 ARCHIVE_CHANNEL = "@sheGOgpUlFVmMTRk"
@@ -1219,4 +1219,9 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Remove webhook error: {e}")
         
-    bot.infinity_polling(skip_pending=True)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"Polling crashed: {e}, restarting in 5 seconds...")
+            time.sleep(5)
