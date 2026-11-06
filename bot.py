@@ -87,9 +87,8 @@ def save_user(message):
         "banned": False,
         "subscription_expire": 0 
     }
-    if user_id not in users:
-        users[user_id] = user_data
-        save_json(USERS_FILE, users)
+    users[user_id] = user_data
+    save_json(USERS_FILE, users)
 
 def is_banned(user_id):
     users = load_users()
@@ -194,7 +193,7 @@ def send_welcome(message):
     if channels and user_id not in admins and not check_membership(user_id):
         markup = types.InlineKeyboardMarkup()
         for ch in channels:
-            markup.add(types.InlineKeyboardButton(f"📢 عضويت در {ch}", url=f"https://t.me/{ch.replace('@','')}"))
+            markup.add(types.InlineKeyboardButton(f"📢 عضویت در {ch}", url=f"https://t.me/{ch.replace('@','')}"))
         markup.add(types.InlineKeyboardButton("🔄 عضو شدم، بررسی مجدد", callback_data="check_sub"))
         bot.reply_to(message, "⚠️ برای استفاده از ربات ابتدا باید در کانال‌های زیر عضو شوید:", reply_markup=markup)
         return
@@ -620,11 +619,9 @@ def callback_router(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
 
     elif data == "adm_broadcast":
-        user_states[user_id] = "waiting_broadcast"
+        user_states[user_id] = "waiting_main_broadcast"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی را بفرستید:", reply_markup=types.InlineKeyboardMarkup().add(
-            types.InlineKeyboardButton("📤 پیام همگانی ربات اصلی", callback_data="bc_main")
-        ))
+        bot.send_message(call.message.chat.id, "💬 متن پیام همگانی برای کاربران ربات اصلی را بفرستید:")
 
     elif data == "bc_main":
         user_states[user_id] = "waiting_main_broadcast"
