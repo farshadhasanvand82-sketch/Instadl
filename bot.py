@@ -31,7 +31,6 @@ DOWNLOAD_DIR = "downloads"
 user_states = {}
 child_bot_instances = {}
 child_bot_threads = {}
-rename_temp_data = {} 
 
 app = Flask(__name__)
 
@@ -207,7 +206,6 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# دریافت خودکار سرورها هر ۳۰ ثانیه یک‌بار و ارسال با فرمت قابل کپی و آیدی چنل
 def fetch_channel_web_updates():
     import urllib.request
     import urllib.parse
@@ -686,7 +684,7 @@ def callback_router(call):
     elif data == "pro_add_src":
         user_states[user_id] = "waiting_pro_src"
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📥 آیدی کانال منبع پرو را بفرستید (مثل `@source_channel`):")
+        bot.send_message(call.message.chat.id, "📥 آیدی کانال منبع پرو را بفرستید (مثل `@ConfigShub`):")
 
     elif data == "pro_clear_src":
         settings["pro_sources"] = []
@@ -759,7 +757,7 @@ def callback_router(call):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="adm_rename_btn"),
-            types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="adm_back")
+            types.InlineKeyboardButton("🔙 بازگشت", callback_data="adm_back")
         )
         bot.answer_callback_query(call.id)
         bot.edit_message_text("🎛 **مدیریت دکمه‌های منو:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
@@ -849,13 +847,44 @@ def handle_all_requests(message):
             bot.reply_to(message, f"🔍 **نتیجه جستجو برای:** `{sq}`", reply_markup=mrk, parse_mode="Markdown")
             return
 
+        elif current_state == "waiting_main_broadcast":
+            user_states.pop(user_id, None)
+            users = load_users()
+            sent_count = 0
+            fail_count = 0
+            
+            status_msg = bot.reply_to(message, "⏳ در حال ارسال پیام همگانی به کاربران...")
+            for uid_str in users.keys():
+                try:
+                    bot.send_message(int(uid_str), text)
+                    sent_count += 1
+                except:
+                    fail_count += 1
+            
+            bot.edit_message_text(
+                f"✅ **پیام همگانی با موفقیت ارسال شد!**\n\n"
+                f"📤 ارسال شده به: {sent_count} کاربر\n"
+                f"❌ ناموفق (مسدودکرده ربات): {fail_count}",
+                message.chat.id, status_msg.message_id
+            )
+            return
+
+        elif current_state == "waiting_add_channel":
+            user_states.pop(user_id, None)
+            ch = text.strip()
+            if ch not in settings["channels"]:
+                settings["channels"].append(ch)
+                save_settings(settings)
+            bot.reply_to(message, f"✅ کانال قفل `{ch}` با موفقیت اضافه شد!", reply_markup=get_reply_keyboard(user_id))
+            return
+
         elif current_state == "waiting_pro_src":
             user_states.pop(user_id, None)
             src_ch = text.strip()
             if src_ch not in settings["pro_sources"]:
                 settings["pro_sources"].append(src_ch)
                 save_settings(settings)
-            bot.reply_to(message, f"✅ کانال منبع `{src_ch}` اضافه شد!", reply_markup=get_reply_keyboard(user_id))
+            bot.reply_to(message, f"✅ کانال منبع پرو `{src_ch}` با موفقیت ثبت شد!", reply_markup=get_reply_keyboard(user_id))
             return
 
         elif current_state == "waiting_pro_dest":
@@ -863,7 +892,7 @@ def handle_all_requests(message):
             dest_ch = text.strip()
             settings["pro_dest"] = dest_ch
             save_settings(settings)
-            bot.reply_to(message, f"✅ کانال مقصد روی `{dest_ch}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
+            bot.reply_to(message, f"✅ کانال مقصد پرو روی `{dest_ch}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
             return
 
         elif current_state == "waiting_pro_name":
@@ -871,7 +900,7 @@ def handle_all_requests(message):
             pname = text.strip()
             settings["pro_name"] = pname
             save_settings(settings)
-            bot.reply_to(message, f"✅ نام پیشوند سرور روی `{pname}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
+            bot.reply_to(message, f"✅ نام پیشوند سرورها روی `{pname}` تنظیم شد!", reply_markup=get_reply_keyboard(user_id))
             return
 
         elif current_state and current_state.startswith("set_name_"):
@@ -957,7 +986,6 @@ def handle_all_requests(message):
     if not (text.startswith("http://") or text.startswith("https://")):
         return
 
-    # ذخیره آخرین لینک ارسالی کاربر برای استفاده در جستجوی موزیک
     user_last_urls = load_json(USER_LAST_URL_FILE, {})
     user_last_urls[str(user_id)] = text
     save_json(USER_LAST_URL_FILE, user_last_urls)
@@ -1189,8 +1217,6 @@ if __name__ == "__main__":
     ping_thread.start()
     
     print("Bot & Web server are running with Self-Ping enabled...")
-    
-    # حذف وب‌هوک قدیمی برای اینکه پولینگ به درستی کار کند
     try:
         bot.remove_webhook()
     except Exception as e:
