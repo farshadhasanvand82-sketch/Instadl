@@ -207,7 +207,7 @@ def send_welcome(message):
         reply_markup=get_reply_keyboard(user_id)
     )
 
-# بررسی و دریافت خودکار سرورها هر ۳۰ ثانیه یک‌بار و ارسال به کانال مقصد با قابلیت کپی و آیدی چنل
+# دریافت خودکار سرورها هر ۳۰ ثانیه یک‌بار و ارسال با فرمت قابل کپی و آیدی چنل
 def fetch_channel_web_updates():
     import urllib.request
     import urllib.parse
@@ -257,7 +257,6 @@ def fetch_channel_web_updates():
                                         encoded_name = urllib.parse.quote(f"{new_name} {idx+1}")
                                         final_cfg = f"{cfg}#{encoded_name}"
                                     
-                                    # قالب‌بندی به صورت قابل کپی به همراه آیدی کانال در زیر پیام
                                     msg_to_send = f"`{final_cfg}`\n\n{dest_ch}"
                                     try:
                                         bot.send_message(dest_ch, msg_to_send, parse_mode="Markdown")
@@ -272,7 +271,7 @@ def fetch_channel_web_updates():
         except Exception as e:
             print(f"Background fetch error: {e}")
         
-        time.sleep(30) # بررسی و دریافت خودکار هر ۳۰ ثانیه یک بار
+        time.sleep(30)
 
 def generate_users_page(page=0, search_query=""):
     users = load_users()
@@ -349,7 +348,6 @@ def callback_router(call):
             bot.answer_callback_query(call.id, "❌ هنوز در کانال‌ها عضو نشده‌اید!", show_alert=True)
         return
 
-    # شناسایی موزیک بر اساس آخرین لینک ارسالی کاربر با نمایش درصدها
     if data.startswith("find_music_"):
         user_last_urls = load_json(USER_LAST_URL_FILE, {})
         target_url = user_last_urls.get(str(user_id))
@@ -1191,6 +1189,11 @@ if __name__ == "__main__":
     ping_thread.start()
     
     print("Bot & Web server are running with Self-Ping enabled...")
-    try: bot.remove_webhook()
-    except: pass
-    bot.infinity_polling()
+    
+    # حذف وب‌هوک قدیمی برای اینکه پولینگ به درستی کار کند
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Remove webhook error: {e}")
+        
+    bot.infinity_polling(skip_pending=True)
